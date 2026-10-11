@@ -6,7 +6,22 @@ from django.utils import timezone
 from accounts.models import User
 from .models import Incident
 
+from django.test import TestCase
+from django.urls import reverse
 
+from rest_framework.test import APIClient
+
+
+class IncidentAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_anonymous_user_cannot_list_incidents(self):
+        response = self.client.get(
+            reverse("incident-list-create")
+        )
+
+        self.assertIn(response.status_code, [401, 403])
 class IncidentModelTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

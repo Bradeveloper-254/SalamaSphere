@@ -96,6 +96,7 @@ class Incident(models.Model):
     client_event_id = models.UUIDField(
         null=True,
         blank=True,
+        editable=False,
     )
 
     sync_received_at = models.DateTimeField(
