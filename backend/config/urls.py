@@ -34,4 +34,12 @@ urlpatterns = [
         "api-auth/",
         include("rest_framework.urls"),
     ),
+    path(
+        "api/",
+        include("evidence.urls"),
+    ),
+    path(
+        "api/",
+        include("threat_analysis.urls"),
+    ),
 ]

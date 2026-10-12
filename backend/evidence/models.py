@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -28,6 +29,14 @@ class Evidence(models.Model):
         on_delete=models.PROTECT,
         related_name="evidence_files",
     )
+
+    uploaded_by = models.ForeignKey(
+    settings.AUTH_USER_MODEL,
+    on_delete=models.PROTECT,
+    related_name="uploaded_evidence",
+    null=True,
+    blank=True,
+   )
 
     evidence_type = models.CharField(
         max_length=20,
@@ -70,10 +79,18 @@ class Evidence(models.Model):
         auto_now_add=True,
     )
 
+    last_verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
     metadata = models.JSONField(
         default=dict,
         blank=True,
     )
 
+    class Meta:
+        ordering = ["-uploaded_at"]
+
     def __str__(self):
-        return self.original_filename
+        return f"{self.evidence_type}: {self.original_filename}"

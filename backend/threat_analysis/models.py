@@ -5,16 +5,25 @@ from django.db import models
 
 
 class ThreatAssessment(models.Model):
-    class ThreatLevel(models.TextChoices):
-        LOW = "low", "Low"
-        MEDIUM = "medium", "Medium"
-        HIGH = "high", "High"
 
-    class AssessmentSource(models.TextChoices):
-        USER = "user", "User Selected"
-        RULES = "rules", "Rule Based"
-        NLP = "nlp", "NLP Model"
-        REVIEW = "review", "Human Review"
+    LEVEL_CHOICES = [
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+    ]
+
+    SOURCE_CHOICES = [
+        ("rules", "Rules-based assessment"),
+        ("user_selected", "Survivor-selected"),
+        ("insufficient_information", "Insufficient information"),
+    ]
+
+    REVIEW_STATUS_CHOICES = [
+        ("pending", "Pending review"),
+        ("accepted", "Accepted"),
+        ("corrected", "Corrected"),
+        ("marked_incorrect", "Marked incorrect"),
+    ]
 
     id = models.UUIDField(
         primary_key=True,
@@ -24,36 +33,75 @@ class ThreatAssessment(models.Model):
 
     incident = models.ForeignKey(
         "incidents.Incident",
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="threat_assessments",
     )
 
-    threat_level = models.CharField(
+    assessed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="threat_assessments",
+        null=True,
+        blank=True,
+    )
+
+    suggested_level = models.CharField(
         max_length=10,
-        choices=ThreatLevel.choices,
+        choices=LEVEL_CHOICES,
+        null=True,
+        blank=True,
+    )
+    threat_level = models.CharField(
+        max_length=10,  
+        choices=LEVEL_CHOICES,
+        null=True,
+        blank=True,
+    )
+
+    final_level = models.CharField(
+        max_length=10,
+        choices=LEVEL_CHOICES,
+        null=True,
+        blank=True,
     )
 
     assessment_source = models.CharField(
+        max_length=30,
+        choices=SOURCE_CHOICES,
+    )
+
+    assessment_reason = models.TextField(
+        blank=True,
+    )
+
+    indicators = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    user_explanation = models.TextField(
+        blank=True,
+    )
+
+    review_status = models.CharField(
         max_length=20,
-        choices=AssessmentSource.choices,
-        default=AssessmentSource.USER,
+        choices=REVIEW_STATUS_CHOICES,
+        default="pending",
     )
 
-    confidence_score = models.FloatField(
-        null=True,
-        blank=True,
+    needs_review = models.BooleanField(
+        default=True,
     )
 
-    explanation = models.TextField(
-        blank=True,
+    created_at = models.DateTimeField(
+        auto_now_add=True,
     )
-
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
+        related_name="reviewed_threat_assessments",
         null=True,
         blank=True,
-        related_name="reviewed_threat_assessments",
     )
 
     reviewed_at = models.DateTimeField(
@@ -61,9 +109,10 @@ class ThreatAssessment(models.Model):
         blank=True,
     )
 
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-    )
+    class Meta:
+        ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.incident_id}: {self.threat_level}"
+        return (
+            f"Threat assessment for incident {self.incident_id}"
+        )
