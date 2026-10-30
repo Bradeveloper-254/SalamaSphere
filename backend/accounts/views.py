@@ -1,7 +1,8 @@
 ﻿from django.contrib.auth import authenticate
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
@@ -102,7 +103,22 @@ class LoginView(APIView):
 
 logger = logging.getLogger(__name__)
 
+class CurrentUserView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
 
+    def get(self, request):
+        user = request.user
+
+        return Response(
+            {
+                "username": user.get_username(),
+                "role": user.role,
+                "is_superuser": user.is_superuser,
+                "authority_status": user.authority_status,
+            },
+            status=status.HTTP_200_OK,
+        )
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []

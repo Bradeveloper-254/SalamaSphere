@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import LoginView, RegistrationView
+from .views import LoginView, RegistrationView,CurrentUserView
 from .approval_views import (
     AuthorityAccountStatusView,
     PendingAuthorityApplicationsView,
@@ -30,7 +30,7 @@ urlpatterns = [
         ApproveAuthorityView.as_view(),
         name="approve-authority",
     ),
-
+    path("me/", CurrentUserView.as_view(), name="current-user"),
     path(
         "authority-applications/<int:user_id>/reject/",
         RejectAuthorityView.as_view(),
