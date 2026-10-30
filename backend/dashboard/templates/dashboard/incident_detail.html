@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Incident Details | SalamaSphere</title>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 24px;
+            background: #f4f7fb;
+            color: #172033;
+            font-family: Arial, sans-serif;
+        }
+
+        main {
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        section {
+            margin-bottom: 22px;
+            padding: 22px;
+            background: white;
+            border-radius: 12px;
+            overflow-wrap: anywhere;
+        }
+
+        .field {
+            margin-bottom: 16px;
+        }
+
+        .label {
+            color: #687386;
+            font-size: 14px;
+        }
+
+        .value {
+            margin-top: 5px;
+            font-weight: 600;
+        }
+
+        .muted {
+            color: #687386;
+        }
+
+        .back {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #175cd3;
+            text-decoration: none;
+        }
+
+        .evidence {
+            padding: 16px 0;
+            border-bottom: 1px solid #e8edf4;
+        }
+
+        .evidence:last-child {
+            border-bottom: none;
+        }
+        .review-note {
+        padding: 16px 0;
+        border-bottom: 1px solid #e8edf4;
+    }
+
+    .review-note:last-child {
+        border-bottom: none;
+    }
+
+    .review-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 12px;
+        margin-top: 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        resize: vertical;
+    }
+
+    .primary-button {
+        padding: 11px 18px;
+        background: #175cd3;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    .primary-button:hover {
+        background: #1249a8;
+    }
+
+    .message {
+        padding: 12px;
+        margin-bottom: 12px;
+        border-radius: 8px;
+        background: #e8f7ee;
+    }
+
+    .error-message {
+        background: #fdecec;
+        color: #991b1b;
+    }
+
+    .field-error {
+        color: #b42318;
+    }
+    </style>
+</head>
+
+<body>
+<main>
+
+    <a class="back" href="{% url 'dashboard:incident_list' %}">
+        &larr; Back to dashboard
+    </a>
+    {% if messages %}
+    {% for message in messages %}
+        <div class="message
+            {% if message.tags == 'error' %}error-message{% endif %}"
+            role="status">
+            {{ message }}
+        </div>
+    {% endfor %}
+{% endif %}
+    <h1>Incident Details</h1>
+    <p class="muted">SalamaSphere incident record</p>
+
+    <section>
+        <h2>Incident Information</h2>
+
+        <div class="field">
+            <div class="label">Incident ID</div>
+            <div class="value">{{ incident.id }}</div>
+        </div>
+
+        <div class="field">
+            <div class="label">Threat Level</div>
+            <div class="value">
+                {{ incident.get_threat_level_display }}
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="label">Incident Source</div>
+            <div class="value">
+                {{ incident.get_source_display }}
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="label">Incident Status</div>
+            <div class="value">
+                {{ incident.get_status_display }}
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="label">Occurred At</div>
+            <div class="value">
+                {{ incident.occurred_at|date:"d M Y, H:i:s T" }}
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="label">Received At</div>
+            <div class="value">
+                {{ incident.received_at|date:"d M Y, H:i:s T" }}
+            </div>
+        </div>
+
+        {% if incident.description %}
+            <div class="field">
+                <div class="label">Description</div>
+                <div class="value">{{ incident.description }}</div>
+            </div>
+        {% endif %}
+    </section>
+
+    <section>
+        <h2>Location Information</h2>
+
+        {% if incident.latitude != None and incident.longitude != None %}
+            <p>Latitude: {{ incident.latitude }}</p>
+            <p>Longitude: {{ incident.longitude }}</p>
+
+            {% if incident.location_accuracy_m != None %}
+                <p>
+                    Accuracy:
+                    {{ incident.location_accuracy_m }} metres
+                </p>
+            {% endif %}
+
+            {% if incident.location_source %}
+                <p>
+                    Source: {{ incident.location_source }}
+                </p>
+            {% endif %}
+        {% else %}
+            <p class="muted">
+                No location coordinates were recorded for this incident.
+            </p>
+        {% endif %}
+    </section>
+
+    <section>
+        <h2>Audio Evidence</h2>
+
+        {% if audio_files %}
+            {% for evidence in audio_files %}
+                <div class="evidence">
+                    <p>
+                        <strong>File:</strong>
+                        {{ evidence.original_filename }}
+                    </p>
+
+                    <p>
+                        <strong>Uploaded:</strong>
+                        {{ evidence.uploaded_at|date:"d M Y, H:i:s T" }}
+                    </p>
+
+                    <p>
+                        <strong>Verification Status:</strong>
+                        {{ evidence.get_verification_status_display }}
+                    </p>
+
+                    {% if evidence.sha256_hash %}
+                        <p>
+                            <strong>SHA-256:</strong>
+                            {{ evidence.sha256_hash }}
+                        </p>
+                    {% else %}
+                        <p class="muted">
+                            No SHA-256 hash is stored for this evidence.
+                        </p>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% else %}
+            <p class="muted">
+                No audio evidence is associated with this incident.
+            </p>
+        {% endif %}
+    </section>
+
+    <section>
+        <h2>All Evidence</h2>
+
+        {% if evidence_files %}
+            {% for evidence in evidence_files %}
+                <div class="evidence">
+                    <p>
+                        <strong>Type:</strong>
+                        {{ evidence.get_evidence_type_display }}
+                    </p>
+
+                    <p>
+                        <strong>Filename:</strong>
+                        {{ evidence.original_filename }}
+                    </p>
+
+                    <p>
+                        <strong>Verification:</strong>
+                        {{ evidence.get_verification_status_display }}
+                    </p>
+
+                    <p>
+                        <strong>Uploaded:</strong>
+                        {{ evidence.uploaded_at|date:"d M Y, H:i:s T" }}
+                    </p>
+                   
+                </div>
+            {% endfor %}
+            <button
+    type="button"
+    id="verify-evidence-button"
+    class="primary-button"
+>
+    Verify Evidence Integrity
+</button>
+
+<pre
+    id="verification-results"
+    role="status"
+    aria-live="polite"
+></pre>
+        {% else %}
+            <p class="muted">
+                No evidence files are associated with this incident.
+            </p>
+        {% endif %}
+    </section>
+    <section>
+    <h2>Emergency Notification History</h2>
+
+    {% if notification_history %}
+        {% for notification in notification_history %}
+            <div class="evidence">
+                <p>
+                    <strong>Recipient:</strong>
+                    {{ notification.recipient.name }}
+                </p>
+
+                <p>
+                    <strong>Channel:</strong>
+                    {{ notification.channel|upper }}
+                </p>
+
+                <p>
+                    <strong>Status:</strong>
+                    {{ notification.get_status_display }}
+                </p>
+
+                <p>
+                    <strong>Attempts:</strong>
+                    {{ notification.attempt_count }}
+                </p>
+
+                <p>
+                    <strong>Created:</strong>
+                    {{ notification.created_at|date:"d M Y, H:i:s T" }}
+                </p>
+
+                {% if notification.provider_status %}
+                    <p>
+                        <strong>Provider status:</strong>
+                        {{ notification.provider_status }}
+                    </p>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">
+            No emergency notifications are recorded for this incident.
+        </p>
+    {% endif %}
+</section>
+<section>
+    <h2>Incident Review History</h2>
+
+    {% if review_notes %}
+        {% for review_note in review_notes %}
+            <div class="review-note">
+                <p>
+                    <strong>Reviewer:</strong>
+                    {{ review_note.author.username }}
+                </p>
+
+                <p>
+                    <strong>Date:</strong>
+                    {{ review_note.created_at|date:"d M Y, H:i:s T" }}
+                </p>
+
+                <p>
+                    <strong>Review note:</strong>
+                </p>
+
+                <p>{{ review_note.note|linebreaksbr }}</p>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">
+            No review notes have been recorded for this incident.
+        </p>
+    {% endif %}
+</section>
+{% if can_write_review_note %}
+<section>
+    <h2>Add Review Note</h2>
+
+    <p class="muted">
+        Record relevant observations or follow-up actions for this incident.
+    </p>
+
+    <form
+        class="review-form"
+        method="post"
+        action="{% url 'dashboard:create_review_note' incident_id=incident.id %}"
+    >
+        {% csrf_token %}
+
+        <label for="review-note">
+            Review note
+        </label>
+
+        <textarea
+            id="review-note"
+            name="note"
+            rows="5"
+            maxlength="5000"
+            required
+            placeholder="Enter the incident review note..."
+        ></textarea>
+
+        <p class="muted">
+            Maximum length: 5,000 characters.
+        </p>
+
+        <button class="primary-button" type="submit">
+            Save Review Note
+        </button>
+    </form>
+</section>
+{% endif %}
+</main>
+<script>
+    const verifyButton = document.getElementById(
+        "verify-evidence-button"
+    );
+
+    const resultsBox = document.getElementById(
+        "verification-results"
+    );
+
+    if (verifyButton && resultsBox) {
+        verifyButton.addEventListener("click", async () => {
+            verifyButton.disabled = true;
+            resultsBox.textContent = "Verifying evidence...";
+
+            try {
+                const response = await fetch(
+                    "/api/incidents/{{ incident.id }}/verify/",
+                    {
+                        method: "GET",
+                        credentials: "same-origin",
+                        headers: {
+                            "Accept": "application/json"
+                        }
+                    }
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    resultsBox.textContent =
+                        data.detail ||
+                        "Evidence verification failed.";
+
+                    return;
+                }
+
+                resultsBox.textContent = JSON.stringify(
+                    data,
+                    null,
+                    2
+                );
+
+            } catch (error) {
+                resultsBox.textContent =
+                    "Could not contact the verification service.";
+
+            } finally {
+                verifyButton.disabled = false;
+            }
+        });
+    }
+</script>
+</body>
+</html>

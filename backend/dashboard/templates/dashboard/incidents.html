@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Incident Dashboard | SalamaSphere</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 24px;
+            background: #f4f7fb;
+            color: #172033;
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            margin-bottom: 6px;
+        }
+
+        .muted {
+            color: #687386;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(
+                auto-fit,
+                minmax(190px, 1fr)
+            );
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .card {
+            background: white;
+            padding: 22px;
+            border-radius: 12px;
+            box-shadow: 0 3px 12px rgba(20, 35, 60, 0.06);
+        }
+
+        .card h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #687386;
+        }
+
+        .number {
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            background: white;
+            border-radius: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e8edf4;
+        }
+
+        th {
+            background: #f8fafc;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 9px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .high {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .medium {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .low {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .link {
+            color: #175cd3;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .empty {
+            padding: 28px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <header class="header">
+        <div>
+            <h1>SalamaSphere</h1>
+            <p class="muted">Incident Dashboard</p>
+        </div>
+
+        <div>
+            Signed in as {{ request.user.username }}
+        </div>
+    </header>
+
+    <section class="summary">
+
+        <div class="card">
+            <h2>Total Incidents</h2>
+            <div class="number">{{ summary.total|default:0 }}</div>
+        </div>
+
+        <div class="card">
+            <h2>High-Priority Incidents</h2>
+            <div class="number">{{ summary.high_priority|default:0 }}</div>
+        </div>
+
+        <div class="card">
+            <h2>Pending Incidents</h2>
+            <div class="number">{{ summary.pending|default:0 }}</div>
+        </div>
+
+    </section>
+
+    <section>
+        <h2>Recent Incidents</h2>
+
+        <div class="table-wrapper">
+            {% if incidents %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Incident ID</th>
+                            <th>Threat Level</th>
+                            <th>Source</th>
+                            <th>Occurred At</th>
+                            <th>Received At</th>
+                            <th>Status</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                    {% for incident in incidents %}
+                        <tr>
+                            <td>{{ incident.id }}</td>
+
+                            <td>
+                                <span class="badge {{ incident.threat_level }}">
+                                    {{ incident.get_threat_level_display }}
+                                </span>
+                            </td>
+
+                            <td>{{ incident.get_source_display }}</td>
+
+                            <td>{{ incident.occurred_at|date:"d M Y, H:i" }}</td>
+
+                            <td>{{ incident.received_at|date:"d M Y, H:i" }}</td>
+
+                            <td>{{ incident.get_status_display }}</td>
+
+                            <td>
+                                <a
+                                    class="link"
+                                    href="{% url 'dashboard:incident_detail' incident.id %}"
+                                >
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="empty">
+                    <h3>No incidents found</h3>
+                    <p class="muted">
+                        Incidents you are authorized to view will appear here.
+                    </p>
+                </div>
+            {% endif %}
+        </div>
+    </section>
+
+</div>
+</body>
+</html>

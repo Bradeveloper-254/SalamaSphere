@@ -42,4 +42,24 @@ urlpatterns = [
         "api/",
         include("threat_analysis.urls"),
     ),
+    path(
+    "api/notifications/",
+    include("notifications.urls"),
+    ),
+    path(
+    "api/accounts/",
+    include("accounts.urls"),
+    ),
+    path(
+    "api/trusted-contacts/",
+    include("trusted_contacts.urls"),
+    ),
+    path(
+    "dashboard/",
+    include("dashboard.urls"),
+    ),
+    path(
+        "api/dashboard/",
+        include("dashboard.api_urls"),
+    ),
 ]

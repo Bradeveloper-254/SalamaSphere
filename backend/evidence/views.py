@@ -2,7 +2,8 @@ import hashlib
 import logging
 import uuid
 from pathlib import Path
-
+from dashboard.audit import record_incident_audit
+from dashboard.models import IncidentAuditEvent
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
@@ -11,6 +12,7 @@ from rest_framework import status
 from rest_framework.exceptions import APIException
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
+from django.http import FileResponse
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -136,6 +138,54 @@ class EvidenceUploadView(APIView):
         )
 
 
+class EvidenceAudioView(EvidenceUploadView):
+    """Upload or stream the WAV evidence attached to an incident."""
+
+    def _get_incident(self, request, incident_id):
+        return Incident.objects.filter(
+            id=incident_id,
+            device__owner=request.user,
+        ).first()
+
+    def get(self, request, incident_id):
+        incident = self._get_incident(request, incident_id)
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        evidence = Evidence.objects.filter(
+            incident=incident,
+            evidence_type=Evidence.EvidenceType.AUDIO,
+        ).order_by("-uploaded_at").first()
+        if evidence is None:
+            return Response(
+                {"detail": "No audio evidence exists for this incident."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            audio_file = default_storage.open(evidence.storage_key, "rb")
+        except FileNotFoundError:
+            return Response(
+                {"detail": "The stored audio file is unavailable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        response = FileResponse(
+            audio_file,
+            content_type=evidence.mime_type or "audio/wav",
+        )
+        response["Content-Length"] = str(evidence.file_size_bytes)
+        response["Content-Disposition"] = (
+            f'inline; filename="{evidence.original_filename}"'
+        )
+        response["X-Evidence-Id"] = str(evidence.id)
+        response["X-Evidence-SHA256"] = evidence.sha256_hash
+        return response
+
+
 class EvidenceVerificationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -180,8 +230,10 @@ class EvidenceVerificationView(APIView):
                         digest.update(chunk)
 
                 current_hash = digest.hexdigest()
-                matches = current_hash == evidence.sha256_hash
-
+                matches = (
+                        bool(evidence.sha256_hash)
+                        and current_hash == evidence.sha256_hash
+                    )
                 evidence.verification_status = (
                     Evidence.VerificationStatus.VERIFIED
                     if matches
@@ -256,6 +308,17 @@ class EvidenceVerificationView(APIView):
             for item in results
         )
 
+        record_incident_audit(
+            actor=request.user,
+            incident=incident,
+            action=IncidentAuditEvent.Action.EVIDENCE_VERIFICATION,
+            outcome=(
+                IncidentAuditEvent.Outcome.SUCCESS
+                if all_verified
+                else IncidentAuditEvent.Outcome.FAILURE
+            ),
+        )
+
         return Response(
             {
                 "incident_id": str(incident.id),
@@ -265,7 +328,9 @@ class EvidenceVerificationView(APIView):
                 "message": (
                     "All evidence files match their recorded hashes."
                     if all_verified
-                    else "One or more evidence files failed verification."
+                    else (
+                        "One or more evidence files failed verification."
+                    )
                 ),
             },
             status=status.HTTP_200_OK,

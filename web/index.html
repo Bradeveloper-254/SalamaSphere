@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SalamaSphere — Safety operations</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">S</span><span>Salama<span>Sphere</span></span></div>
+      <div class="role-picker"><label for="role">View as</label><select id="role"><option value="survivor">Victim</option><option value="authority">Authority</option><option value="admin">Admin</option></select></div>
+      <nav id="navigation" aria-label="Application navigation"></nav>
+      <div class="sidebar-footer"><span class="status-dot"></span> Protection services online</div>
+    </aside>
+    <main class="content">
+      <header class="topbar"><div><p class="eyebrow" id="section-label">Victim Dashboard</p><h1 id="screen-title">Your safety centre</h1></div><button class="icon-button" aria-label="Notifications">◔</button></header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="screen" aria-live="polite"></section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

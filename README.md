@@ -54,6 +54,7 @@ contacts.
 
 - backend/: Server-side application.
 - mobile/: Mobile application.
+- SalamaSphere_device/: Wearable firmware, hardware inventory, and device documentation.
 - wearable/: Wearable firmware.
 - web/: Web interface resources.
 - docs/: Architecture and project documentation.
@@ -112,3 +113,35 @@ API planning, and testing documentation.
 - Notification integration.
 - Mobile application integration.
 - Wearable firmware development.
+
+## Device BLE Protocol UUIDs
+
+We'll use this service UUID:
+
+7b6a0001-7d42-4a8e-9b31-2f4c8a6e1000
+
+And these characteristic UUIDs:
+
+Device Identity:
+7b6a0002-7d42-4a8e-9b31-2f4c8a6e1000
+
+SOS Event:
+7b6a0003-7d42-4a8e-9b31-2f4c8a6e1000
+
+Recording Status:
+7b6a0004-7d42-4a8e-9b31-2f4c8a6e1000
+
+Audio Metadata:
+7b6a0005-7d42-4a8e-9b31-2f4c8a6e1000
+
+Audio Transfer Control:
+7b6a0006-7d42-4a8e-9b31-2f4c8a6e1000
+
+Audio Data:
+7b6a0007-7d42-4a8e-9b31-2f4c8a6e1000
+
+Transfer Acknowledgement:
+7b6a0008-7d42-4a8e-9b31-2f4c8a6e1000
+
+Battery Status:
+7b6a0009-7d42-4a8e-9b31-2f4c8a6e1000

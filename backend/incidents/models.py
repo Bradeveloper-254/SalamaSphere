@@ -46,6 +46,10 @@ class Incident(models.Model):
         choices=IncidentSource.choices,
         default=IncidentSource.MOBILE,
     )
+    is_sos = models.BooleanField(
+        default=False,
+        help_text="Whether this incident represents an explicit SOS activation.",
+    )
 
     threat_level = models.CharField(
         max_length=10,
@@ -124,3 +128,50 @@ class Incident(models.Model):
 
     def __str__(self):
         return f"{self.id} - {self.threat_level}"
+    
+    
+    
+
+class IncidentAssignment(models.Model):
+    """
+    Explicitly links an incident to an authority account.
+    Access must still be checked by the API.
+    """
+
+    incident = models.ForeignKey(
+        Incident,
+        on_delete=models.PROTECT,
+        related_name="authority_assignments",
+    )
+
+    authority = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="assigned_incident_cases",
+    )
+
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="created_incident_assignments",
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["incident", "authority"],
+                name="unique_incident_authority_assignment",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.incident_id} assigned to {self.authority_id}"
