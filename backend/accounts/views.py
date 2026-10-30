@@ -20,7 +20,7 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework.throttling import AnonRateThrottle
 
 from .serializers import RegistrationSerializer
-
+logger = logging.getLogger(__name__)
 
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
@@ -54,6 +54,7 @@ class RegistrationView(APIView):
         )
 
 
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -68,40 +69,55 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user = authenticate(
-            request=request,
-            username=username,
-            password=password,
-        )
-
-        if user is None:
-            return Response(
-                {"detail": "Invalid username or password."},
-                status=status.HTTP_401_UNAUTHORIZED,
+        try:
+            # Step A: Authenticate the account
+            user = authenticate(
+                request=request,
+                username=username,
+                password=password,
             )
 
-        if not user.is_active:
+            if user is None:
+                return Response(
+                    {"detail": "Invalid username or password."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            if not user.is_active:
+                return Response(
+                    {"detail": "This account is inactive."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Step B: Create or retrieve the authentication token
+            token, _ = Token.objects.get_or_create(user=user)
+
+            # Step C: Return the authenticated account
             return Response(
-                {"detail": "This account is inactive."},
-                status=status.HTTP_403_FORBIDDEN,
+                {
+                    "token": token.key,
+                    "username": user.get_username(),
+                    "role": user.role,
+                    "is_superuser": user.is_superuser,
+                    "authority_status": user.authority_status,
+                },
+                status=status.HTTP_200_OK,
             )
 
-        token, _ = Token.objects.get_or_create(user=user)
+        except Exception:
+            # Never log passwords, usernames, or authentication tokens.
+            logger.exception(
+                "SalamaSphere LoginView encountered an unexpected error."
+            )
 
-        return Response(
-            {
-                "token": token.key,
-                "username": user.get_username(),
-                "role": user.role,
-                "is_superuser": user.is_superuser,
-                "authority_status": user.authority_status,
-            },
-            status=status.HTTP_200_OK,
-        )
+            return Response(
+                {
+                    "detail": "Login service temporarily unavailable."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
-
-logger = logging.getLogger(__name__)
 
 class CurrentUserView(APIView):
     authentication_classes = [TokenAuthentication]
