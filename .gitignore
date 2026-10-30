@@ -43,3 +43,15 @@ dist/
 
 # Hardware build output
 .pio/
+
+# SalamaSphere private evidence and verification documents
+backend/private_media/
+backend/media/
+private_media/
+
+# Local database and evidence backups
+*.sqlite3
+*.db
+*.wav
+*.mp3
+*.m4a
