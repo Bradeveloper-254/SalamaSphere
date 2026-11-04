@@ -20,7 +20,11 @@ class DashboardOverviewView(APIView):
                 authority_assignments__authority=user,
                 authority_assignments__is_active=True,
             ).distinct()
-        elif user.role == User.Role.ADMIN or user.is_superuser:
+        elif user.is_superuser or (
+            user.role == User.Role.ADMIN
+            and user.is_staff
+            and user.is_active
+        ):
             incidents = Incident.objects.all()
         else:
             incidents = Incident.objects.filter(user=user)
@@ -32,13 +36,47 @@ class DashboardOverviewView(APIView):
             reviewed=Count("id", filter=Q(status="reviewed")),
         )
 
+        incident_rows = []
+        for incident in incidents.select_related("device").prefetch_related(
+            "evidence_files"
+        ).order_by("-received_at")[:20]:
+            incident_rows.append({
+                "id": str(incident.id),
+                "client_event_id": (
+                    str(incident.client_event_id)
+                    if incident.client_event_id
+                    else None
+                ),
+                "threat_level": incident.threat_level,
+                "status": incident.status,
+                "source": incident.source,
+                "description": incident.description,
+                "is_sos": incident.is_sos,
+                "occurred_at": incident.occurred_at,
+                "received_at": incident.received_at,
+                "latitude": incident.latitude,
+                "longitude": incident.longitude,
+                "location_accuracy_m": incident.location_accuracy_m,
+                "location_source": incident.location_source,
+                "evidence": [
+                    {
+                        "id": str(evidence.id),
+                        "evidence_type": evidence.evidence_type,
+                        "original_filename": evidence.original_filename,
+                        "mime_type": evidence.mime_type,
+                        "file_size_bytes": evidence.file_size_bytes,
+                        "uploaded_at": evidence.uploaded_at,
+                        "file_url": f"/api/evidence/{evidence.id}/file/",
+                        "metadata": evidence.metadata,
+                    }
+                    for evidence in incident.evidence_files.all()
+                ] if incident.user_id == user.id else [],
+            })
+
         return Response({
             "role": user.role,
             "summary": summary,
-            "incidents": list(incidents.order_by("-received_at").values(
-                "id", "threat_level", "status", "source", "is_sos",
-                "occurred_at", "received_at",
-            )[:20]),
+            "incidents": incident_rows,
             "devices": list(WearableDevice.objects.filter(owner=user).values(
                 "id", "device_name", "device_identifier", "status", "last_seen_at",
             )),

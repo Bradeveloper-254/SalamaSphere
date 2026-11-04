@@ -170,7 +170,17 @@ class IncidentAssignment(models.Model):
             models.UniqueConstraint(
                 fields=["incident", "authority"],
                 name="unique_incident_authority_assignment",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["incident"],
+                condition=models.Q(is_active=True),
+                name="unique_active_incident_assignment",
+            ),
+            models.UniqueConstraint(
+                fields=["authority"],
+                condition=models.Q(is_active=True),
+                name="unique_active_authority_assignment",
+            ),
         ]
 
     def __str__(self):

@@ -48,6 +48,8 @@ class Notification(models.Model):
 
     message = models.TextField()
 
+    is_read = models.BooleanField(default=False)
+
     delivery_status = models.CharField(
         max_length=20,
         choices=DeliveryStatus.choices,

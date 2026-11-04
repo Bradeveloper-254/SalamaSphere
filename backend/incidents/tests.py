@@ -63,6 +63,23 @@ class IncidentAPITest(TestCase):
             1,
         )
 
+    def test_mobile_report_can_be_created_without_a_wearable(self):
+        response = self.client.post(
+            self.endpoint,
+            {
+                "source": Incident.IncidentSource.MOBILE,
+                "threat_level": Incident.ThreatLevel.MEDIUM,
+                "description": "Mobile evidence report",
+                "occurred_at": timezone.now().isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        incident = Incident.objects.get(id=response.data["id"])
+        self.assertIsNone(incident.device_id)
+        self.assertEqual(incident.user_id, self.user.id)
+
     def test_repeated_submission_does_not_create_duplicate(self):
         event_id = str(uuid.uuid4())
         payload = self.build_payload(event_id)

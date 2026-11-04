@@ -1,5 +1,11 @@
 
+from datetime import timedelta
+
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.utils import timezone
+from math import asin, cos, radians, sin, sqrt
 
 from rest_framework import generics, status
 from rest_framework.exceptions import APIException
@@ -14,6 +20,11 @@ from devices.models import WearableDevice
 from emergency_notifications.services import (
     queue_emergency_notifications,
 )
+from notifications.services import (
+    notify_case_assigned,
+    notify_case_resolved,
+    notify_new_incident,
+)
 
 from .models import Incident, IncidentAssignment
 from .serializers import (
@@ -22,6 +33,8 @@ from .serializers import (
     IncidentSerializer,
 )
 
+User = get_user_model()
+
 
 class IncidentListCreateView(generics.ListCreateAPIView):
     serializer_class = IncidentSerializer
@@ -29,8 +42,9 @@ class IncidentListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         return Incident.objects.filter(
-            device__owner=self.request.user
-        ).order_by("-created_at")
+            Q(device__owner=self.request.user)
+            | Q(user=self.request.user)
+        ).distinct().order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -40,28 +54,37 @@ class IncidentListCreateView(generics.ListCreateAPIView):
             "device_identifier"
         )
 
-        if not device_identifier:
+        if (
+            not device_identifier
+            and (
+                serializer.validated_data.get("source")
+                == Incident.IncidentSource.WEARABLE
+                or serializer.validated_data.get("is_sos", False)
+            )
+        ):
             return Response(
                 {"device_identifier": "This field is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            device = WearableDevice.objects.get(
-                device_identifier=device_identifier,
-                owner=request.user,
-                status=WearableDevice.DeviceStatus.ACTIVE,
-            )
-        except WearableDevice.DoesNotExist:
-            return Response(
-                {
-                    "detail": (
-                        "The device was not found, does not belong "
-                        "to your account, or is not active."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        device = None
+        if device_identifier:
+            try:
+                device = WearableDevice.objects.get(
+                    device_identifier=device_identifier,
+                    owner=request.user,
+                    status=WearableDevice.DeviceStatus.ACTIVE,
+                )
+            except WearableDevice.DoesNotExist:
+                return Response(
+                    {
+                        "detail": (
+                            "The device was not found, does not belong "
+                            "to your account, or is not active."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         event_id = serializer.validated_data.get("client_event_id")
 
@@ -84,6 +107,7 @@ class IncidentListCreateView(generics.ListCreateAPIView):
                     device=device,
                 )
                 queue_emergency_notifications(incident)
+                notify_new_incident(incident)
 
         except IntegrityError:
             if event_id is not None:
@@ -115,8 +139,9 @@ class IncidentDetailView(generics.RetrieveUpdateAPIView):
 
     def get_queryset(self):
         return Incident.objects.filter(
-            device__owner=self.request.user
-        )
+            Q(device__owner=self.request.user)
+            | Q(user=self.request.user)
+        ).distinct()
 
     def update(self, request, *args, **kwargs):
         protected_fields = {
@@ -174,6 +199,63 @@ class AuthorityAssignedIncidentListView(generics.ListAPIView):
         )
 
 
+class AuthorityPresenceView(APIView):
+    permission_classes = [IsAuthenticated, IsApprovedAuthority]
+
+    def post(self, request):
+        latitude = request.data.get("latitude")
+        longitude = request.data.get("longitude")
+        available = request.data.get("is_available")
+        if not isinstance(available, bool):
+            return Response(
+                {"is_available": ["A boolean value is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if available and (latitude is None or longitude is None):
+            return Response(
+                {"location": ["Location is required when becoming available."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            latitude = float(latitude) if latitude is not None else None
+            longitude = float(longitude) if longitude is not None else None
+        except (TypeError, ValueError):
+            return Response(
+                {"location": ["Latitude and longitude must be numbers."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if (
+            latitude is not None
+            and not -90 <= latitude <= 90
+            or longitude is not None
+            and not -180 <= longitude <= 180
+        ):
+            return Response(
+                {"location": ["Location coordinates are out of range."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.user.assigned_incident_cases.filter(is_active=True).exists():
+            return Response(
+                {"is_available": ["Resolve your active case before changing availability."]},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        request.user.is_available = available
+        if latitude is not None and longitude is not None:
+            request.user.last_known_latitude = latitude
+            request.user.last_known_longitude = longitude
+            request.user.location_updated_at = timezone.now()
+        request.user.save(update_fields=[
+            "is_available",
+            "last_known_latitude",
+            "last_known_longitude",
+            "location_updated_at",
+        ])
+        return Response({
+            "is_available": request.user.is_available,
+            "location_updated_at": request.user.location_updated_at,
+        })
+
 
 class IsSalamaSphereAdmin(BasePermission):
     message = "Authorized administrator access is required."
@@ -198,6 +280,28 @@ class IsSalamaSphereAdmin(BasePermission):
 class AdminIncidentAssignmentCreateView(APIView):
     permission_classes = [IsAuthenticated, IsSalamaSphereAdmin]
 
+    def get(self, request):
+        incidents = Incident.objects.exclude(
+            status=Incident.IncidentStatus.CLOSED,
+        ).exclude(
+            authority_assignments__is_active=True,
+        ).order_by("-received_at")
+        return Response([
+            {
+                "id": str(incident.id),
+                "description": incident.description,
+                "threat_level": incident.threat_level,
+                "status": incident.status,
+                "is_sos": incident.is_sos,
+                "occurred_at": incident.occurred_at,
+                "received_at": incident.received_at,
+                "latitude": incident.latitude,
+                "longitude": incident.longitude,
+            }
+            for incident in incidents
+        ])
+
+    @transaction.atomic
     def post(self, request):
         serializer = IncidentAssignmentCreateSerializer(
             data=request.data,
@@ -215,3 +319,102 @@ class AdminIncidentAssignmentCreateView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class AdminAssignableAuthorityListView(APIView):
+    permission_classes = [IsAuthenticated, IsSalamaSphereAdmin]
+
+    def get(self, request):
+        incident_id = request.query_params.get("incident_id")
+        incident = Incident.objects.filter(pk=incident_id).first()
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if incident.latitude is None or incident.longitude is None:
+            return Response(
+                {
+                    "detail": (
+                        "This incident has no location, so nearby "
+                        "authorities cannot be determined."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        busy_authority_ids = IncidentAssignment.objects.filter(
+            is_active=True,
+        ).values_list("authority_id", flat=True)
+        authorities = User.objects.filter(
+            role=User.Role.AUTHORITY,
+            authority_status=User.AuthorityStatus.APPROVED,
+            is_active=True,
+            is_available=True,
+            last_known_latitude__isnull=False,
+            last_known_longitude__isnull=False,
+            location_updated_at__gte=timezone.now() - timedelta(hours=24),
+        ).exclude(id__in=busy_authority_ids)
+
+        candidates = []
+        incident_lat = radians(float(incident.latitude))
+        incident_lon = radians(float(incident.longitude))
+        for authority in authorities:
+            authority_lat = radians(float(authority.last_known_latitude))
+            authority_lon = radians(float(authority.last_known_longitude))
+            lat_delta = authority_lat - incident_lat
+            lon_delta = authority_lon - incident_lon
+            haversine = (
+                sin(lat_delta / 2) ** 2
+                + cos(incident_lat)
+                * cos(authority_lat)
+                * sin(lon_delta / 2) ** 2
+            )
+            distance_km = 6371 * 2 * asin(sqrt(haversine))
+            if distance_km <= 100:
+                candidates.append({
+                    "id": authority.id,
+                    "username": authority.username,
+                    "phone_number": authority.phone_number,
+                    "latitude": authority.last_known_latitude,
+                    "longitude": authority.last_known_longitude,
+                    "distance_km": round(distance_km, 1),
+                    "location_updated_at": authority.location_updated_at,
+                })
+        candidates.sort(key=lambda authority: authority["distance_km"])
+        return Response(candidates)
+
+
+class ResolveAssignedIncidentView(APIView):
+    permission_classes = [IsAuthenticated, IsApprovedAuthority]
+
+    @transaction.atomic
+    def post(self, request, incident_id):
+        incident = Incident.objects.select_for_update().filter(
+            pk=incident_id,
+            authority_assignments__authority=request.user,
+            authority_assignments__is_active=True,
+        ).first()
+        if incident is None:
+            return Response(
+                {"detail": "No active assigned case was found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        assignment = IncidentAssignment.objects.select_for_update().get(
+            incident=incident,
+            authority=request.user,
+            is_active=True,
+        )
+        incident.status = Incident.IncidentStatus.CLOSED
+        incident.save(update_fields=["status", "updated_at"])
+        assignment.is_active = False
+        assignment.save(update_fields=["is_active", "updated_at"])
+        request.user.is_available = False
+        request.user.save(update_fields=["is_available"])
+        notify_case_resolved(assignment)
+        return Response({
+            "incident_id": str(incident.id),
+            "status": incident.status,
+            "message": "Case marked as resolved.",
+        })

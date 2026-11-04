@@ -6,6 +6,7 @@ from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
 from django.core.files.storage import default_storage
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from rest_framework import status
@@ -25,13 +26,6 @@ from .serializers import EvidenceUploadSerializer
 logger = logging.getLogger(__name__)
 
 
-def user_can_access_incident(user, incident):
-    return (
-        incident.device_id is not None
-        and incident.device.owner_id == user.id
-    )
-
-
 def calculate_sha256(file_obj):
     digest = hashlib.sha256()
 
@@ -45,11 +39,36 @@ class EvidenceUploadView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    def post(self, request, incident_id):
-        incident = Incident.objects.filter(
-            id=incident_id,
-            device__owner=request.user,
+    def get_incident(self, request, incident_id):
+        return Incident.objects.filter(id=incident_id).filter(
+            Q(user=request.user) | Q(device__owner=request.user)
         ).first()
+
+    def get(self, request, incident_id):
+        incident = self.get_incident(request, incident_id)
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response([
+            {
+                "id": str(item.id),
+                "evidence_type": item.evidence_type,
+                "original_filename": item.original_filename,
+                "mime_type": item.mime_type,
+                "file_size_bytes": item.file_size_bytes,
+                "verification_status": item.verification_status,
+                "uploaded_at": item.uploaded_at,
+                "file_url": f"/api/evidence/{item.id}/file/",
+                "metadata": item.metadata,
+            }
+            for item in Evidence.objects.filter(incident=incident)
+        ])
+
+    def post(self, request, incident_id):
+        incident = self.get_incident(request, incident_id)
 
         if incident is None:
             return Response(
@@ -57,7 +76,10 @@ class EvidenceUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        serializer = EvidenceUploadSerializer(data=request.data)
+        serializer = EvidenceUploadSerializer(
+            data=request.data,
+            context={"request": request},
+        )
         serializer.is_valid(raise_exception=True)
 
         uploaded_file = serializer.validated_data["file"]
@@ -101,6 +123,12 @@ class EvidenceUploadView(APIView):
                         Evidence.VerificationStatus.PENDING
                     ),
                     recorded_at=recorded_at,
+                    metadata={
+                        "share_with": serializer.validated_data["share_with"],
+                        "trusted_contact_ids": serializer.validated_data[
+                            "trusted_contact_ids"
+                        ],
+                    },
                 )
 
         except Exception as exc:
@@ -142,10 +170,7 @@ class EvidenceAudioView(EvidenceUploadView):
     """Upload or stream the WAV evidence attached to an incident."""
 
     def _get_incident(self, request, incident_id):
-        return Incident.objects.filter(
-            id=incident_id,
-            device__owner=request.user,
-        ).first()
+        return self.get_incident(request, incident_id)
 
     def get(self, request, incident_id):
         incident = self._get_incident(request, incident_id)
@@ -190,9 +215,8 @@ class EvidenceVerificationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, incident_id):
-        incident = Incident.objects.filter(
-            id=incident_id,
-            device__owner=request.user,
+        incident = Incident.objects.filter(id=incident_id).filter(
+            Q(user=request.user) | Q(device__owner=request.user)
         ).first()
 
         if incident is None:
@@ -335,3 +359,42 @@ class EvidenceVerificationView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class EvidenceFileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, evidence_id):
+        evidence = Evidence.objects.filter(
+            id=evidence_id,
+            incident__user=request.user,
+        ).first()
+        if evidence is None:
+            evidence = Evidence.objects.filter(
+                id=evidence_id,
+                incident__device__owner=request.user,
+            ).first()
+        if evidence is None:
+            return Response(
+                {"detail": "Evidence file not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            media_file = default_storage.open(evidence.storage_key, "rb")
+        except FileNotFoundError:
+            return Response(
+                {"detail": "The stored evidence file is unavailable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        response = FileResponse(
+            media_file,
+            content_type=evidence.mime_type or "application/octet-stream",
+        )
+        response["Content-Length"] = str(evidence.file_size_bytes)
+        response["Content-Disposition"] = (
+            f'inline; filename="{evidence.original_filename}"'
+        )
+        response["X-Evidence-SHA256"] = evidence.sha256_hash
+        return response

@@ -2,7 +2,7 @@ from django.contrib.auth import password_validation
 from django.contrib.auth.models import update_last_login
 from django.db import transaction
 from rest_framework import serializers
-
+from .models import AuthorityVerificationDocument
 from .models import User
 from pathlib import Path
 
@@ -61,7 +61,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
         return user
     
-from .models import AuthorityVerificationDocument
+
 
 
 class AuthorityVerificationDocumentSerializer(serializers.ModelSerializer):

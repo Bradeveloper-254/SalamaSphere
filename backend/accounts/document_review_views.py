@@ -41,6 +41,10 @@ class AuthorityVerificationDocumentListView(APIView):
                 "document_type": document.document_type,
                 "review_status": document.review_status,
                 "submitted_at": document.submitted_at.isoformat(),
+                "download_url": (
+                    f"/api/accounts/admin/verification-documents/"
+                    f"{document.id}/download/"
+                ),
             }
             for document in documents
         ]

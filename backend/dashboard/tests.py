@@ -10,11 +10,93 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from incidents.models import Incident
 
 
 User = get_user_model()
+
+
+class DashboardOverviewApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.survivor = User.objects.create_user(
+            username="overview_survivor",
+            email="overview_survivor@example.test",
+            password="test-password",
+            role=User.Role.SURVIVOR,
+        )
+        self.other_survivor = User.objects.create_user(
+            username="overview_other_survivor",
+            email="overview_other_survivor@example.test",
+            password="test-password",
+            role=User.Role.SURVIVOR,
+        )
+        self.incident = Incident.objects.create(
+            user=self.survivor,
+            source=Incident.IncidentSource.MOBILE,
+            threat_level=Incident.ThreatLevel.HIGH,
+            description="Mobile-created incident",
+            occurred_at=timezone.now(),
+            latitude=-1.286389,
+            longitude=36.817223,
+            client_event_id=__import__("uuid").uuid4(),
+        )
+        Incident.objects.create(
+            user=self.other_survivor,
+            source=Incident.IncidentSource.MOBILE,
+            description="Another survivor's incident",
+            occurred_at=timezone.now(),
+            client_event_id=__import__("uuid").uuid4(),
+        )
+        self.endpoint = reverse("dashboard-overview")
+
+    def test_authenticated_survivor_gets_owned_incidents_as_json(self):
+        self.client.force_authenticate(user=self.survivor)
+
+        response = self.client.get(self.endpoint)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        incidents = response.data["incidents"]
+        self.assertEqual(len(incidents), 1)
+        self.assertEqual(incidents[0]["id"], str(self.incident.id))
+        self.assertEqual(
+            incidents[0]["client_event_id"],
+            str(self.incident.client_event_id),
+        )
+        self.assertEqual(incidents[0]["description"], "Mobile-created incident")
+        self.assertEqual(str(incidents[0]["latitude"]), "-1.286389")
+        self.assertEqual(str(incidents[0]["longitude"]), "36.817223")
+
+    def test_admin_role_without_staff_access_sees_only_own_incidents(self):
+        non_staff_admin = User.objects.create_user(
+            username="overview_non_staff_admin",
+            email="overview_non_staff_admin@example.test",
+            password="test-password",
+            role=User.Role.ADMIN,
+        )
+        own_incident = Incident.objects.create(
+            user=non_staff_admin,
+            source=Incident.IncidentSource.MOBILE,
+            occurred_at=timezone.now(),
+            client_event_id=__import__("uuid").uuid4(),
+        )
+        self.client.force_authenticate(user=non_staff_admin)
+
+        response = self.client.get(self.endpoint)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [incident["id"] for incident in response.data["incidents"]],
+            [str(own_incident.id)],
+        )
+
+    def test_anonymous_user_cannot_get_dashboard_overview(self):
+        response = self.client.get(self.endpoint)
+
+        self.assertIn(response.status_code, [401, 403])
 
 
 class IncidentDashboardTests(TestCase):

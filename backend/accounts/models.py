@@ -40,6 +40,21 @@ class User(AbstractUser):
         default=AuthorityStatus.NOT_APPLICABLE,
     )
 
+    is_available = models.BooleanField(default=False)
+    last_known_latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+    last_known_longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
+    location_updated_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(
         auto_now_add=True,
     )
@@ -133,6 +148,7 @@ class AuthorityVerificationDocument(models.Model):
 
     review_reason = models.TextField(
         blank=True,
+        
     )
 
     submitted_at = models.DateTimeField(

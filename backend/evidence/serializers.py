@@ -2,6 +2,8 @@ from pathlib import Path
 
 from rest_framework import serializers
 
+from trusted_contacts.models import TrustedContact
+
 from .models import Evidence
 
 
@@ -14,6 +16,7 @@ ALLOWED_FILES = {
     ".aac": ("audio", {"audio/aac", "application/octet-stream"}),
     ".ogg": ("audio", {"audio/ogg", "application/ogg"}),
     ".webm": ("audio", {"audio/webm", "application/octet-stream"}),
+    ".amr": ("audio", {"audio/amr", "application/octet-stream"}),
     ".jpg": ("image", {"image/jpeg"}),
     ".jpeg": ("image", {"image/jpeg"}),
     ".png": ("image", {"image/png"}),
@@ -38,6 +41,16 @@ class EvidenceUploadSerializer(serializers.Serializer):
     recorded_at = serializers.DateTimeField(
         required=False,
         allow_null=True,
+    )
+    share_with = serializers.ChoiceField(
+        choices=("authorities", "trusted_contacts", "both"),
+        required=False,
+        default="authorities",
+    )
+    trusted_contact_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        default=list,
     )
 
     def validate_file(self, uploaded_file):
@@ -64,6 +77,8 @@ class EvidenceUploadSerializer(serializers.Serializer):
         ).lower()
 
         _, permitted_types = ALLOWED_FILES[extension]
+        if extension == ".webm":
+            permitted_types = {"audio/webm", "video/webm"}
 
         if reported_type not in permitted_types:
             raise serializers.ValidationError(
@@ -77,6 +92,15 @@ class EvidenceUploadSerializer(serializers.Serializer):
         uploaded_file = attrs["file"]
         extension = Path(uploaded_file.name).suffix.lower()
         detected_type, _ = ALLOWED_FILES[extension]
+        if extension == ".webm":
+            mime_type = (
+                getattr(uploaded_file, "content_type", "") or ""
+            ).lower()
+            detected_type = (
+                Evidence.EvidenceType.VIDEO
+                if mime_type.startswith("video/")
+                else Evidence.EvidenceType.AUDIO
+            )
 
         supplied_type = attrs.get("evidence_type")
 
@@ -88,4 +112,32 @@ class EvidenceUploadSerializer(serializers.Serializer):
             })
 
         attrs["evidence_type"] = supplied_type or detected_type
+
+        if attrs["share_with"] in {"trusted_contacts", "both"}:
+            contact_ids = attrs["trusted_contact_ids"]
+            if not contact_ids:
+                raise serializers.ValidationError({
+                    "trusted_contact_ids": (
+                        "Select at least one trusted contact to share with."
+                    )
+                })
+            contacts = TrustedContact.objects.filter(
+                user=self.context["request"].user,
+                is_active=True,
+                id__in=contact_ids,
+            )
+            if len(set(contact_ids)) != contacts.count():
+                raise serializers.ValidationError({
+                    "trusted_contact_ids": (
+                        "Select active trusted contacts from your account."
+                    )
+                })
+        elif attrs["trusted_contact_ids"]:
+            raise serializers.ValidationError({
+                "trusted_contact_ids": (
+                    "Trusted contacts can only be selected when sharing "
+                    "with trusted contacts."
+                )
+            })
+
         return attrs

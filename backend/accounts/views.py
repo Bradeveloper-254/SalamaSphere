@@ -6,9 +6,7 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
-
 import logging
-
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
@@ -18,7 +16,6 @@ from django.core.mail import send_mail
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework.throttling import AnonRateThrottle
-
 from .serializers import RegistrationSerializer
 logger = logging.getLogger(__name__)
 
@@ -85,7 +82,7 @@ class LoginView(APIView):
 
             if not user.is_active:
                 return Response(
-                    {"detail": "This account is inactive."},
+                    {"detail": "This account is inactive. Please contact support/wait for admin approval."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 

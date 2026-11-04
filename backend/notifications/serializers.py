@@ -12,6 +12,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "notification_type",
             "title",
             "message",
+            "is_read",
             "delivery_status",
             "provider_reference",
             "sent_at",

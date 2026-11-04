@@ -122,16 +122,20 @@ class IncidentSerializer(serializers.ModelSerializer):
 
         # Resolve the device if the view did not supply it.
         if device is None:
-            if not device_identifier:
+            if device_identifier:
+                device = WearableDevice.objects.get(
+                    device_identifier=device_identifier,
+                    owner=request.user,
+                    status=WearableDevice.DeviceStatus.ACTIVE,
+                )
+            elif (
+                validated_data.get("source")
+                == Incident.IncidentSource.WEARABLE
+                or validated_data.get("is_sos", False)
+            ):
                 raise serializers.ValidationError({
                     "device_identifier": "This field is required."
                 })
-
-            device = WearableDevice.objects.get(
-                device_identifier=device_identifier,
-                owner=request.user,
-                status=WearableDevice.DeviceStatus.ACTIVE,
-            )
 
         # Enforce ownership using the authenticated user.
         if user != request.user:
@@ -193,13 +197,8 @@ class IncidentAssignmentCreateSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        Incident = __import__(
-            "incidents.models",
-            fromlist=["Incident"],
-        ).Incident
-
-        incident = Incident.objects.filter(
-            pk=attrs["incident_id"]
+        incident = Incident.objects.select_for_update().filter(
+            pk=attrs["incident_id"],
         ).first()
 
         if incident is None:
@@ -209,8 +208,8 @@ class IncidentAssignmentCreateSerializer(serializers.Serializer):
 
         User = get_user_model()
 
-        authority = User.objects.filter(
-            pk=attrs["authority_id"]
+        authority = User.objects.select_for_update().filter(
+            pk=attrs["authority_id"],
         ).first()
 
         if authority is None:
@@ -222,11 +221,28 @@ class IncidentAssignmentCreateSerializer(serializers.Serializer):
             not authority.is_active
             or authority.role != "authority"
             or authority.authority_status != "approved"
+            or not authority.is_available
         ):
             raise serializers.ValidationError({
                 "authority_id": (
-                    "The account must be an active, approved authority."
+                    "Choose an active, approved authority who is available."
                 )
+            })
+
+        if IncidentAssignment.objects.filter(
+            authority=authority,
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError({
+                "authority_id": "This authority is already handling a case."
+            })
+
+        if IncidentAssignment.objects.filter(
+            incident=incident,
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError({
+                "incident_id": "This incident is already assigned."
             })
 
         attrs["incident"] = incident
@@ -261,4 +277,10 @@ class IncidentAssignmentCreateSerializer(serializers.Serializer):
                 ]
             )
 
+        authority.is_available = False
+        authority.save(update_fields=["is_available"])
+
+        from notifications.services import notify_case_assigned
+
+        notify_case_assigned(assignment)
         return assignment
