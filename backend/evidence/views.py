@@ -1,29 +1,39 @@
 import hashlib
+import hmac
+import io
 import logging
 import uuid
 from pathlib import Path
-from dashboard.audit import record_incident_audit
-from dashboard.models import IncidentAuditEvent
+
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Q
+from django.http import FileResponse
 from django.utils import timezone
+
+from dashboard.audit import record_incident_audit
+from dashboard.models import IncidentAuditEvent
 
 from rest_framework import status
 from rest_framework.exceptions import APIException
-from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
-from django.http import FileResponse
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from incidents.models import Incident
 
+from .crypto import decrypt_evidence, encrypt_evidence
 from .models import Evidence
 from .serializers import EvidenceUploadSerializer
 
 
 logger = logging.getLogger(__name__)
+
+
+class EvidenceIntegrityError(Exception):
+    pass
 
 
 def calculate_sha256(file_obj):
@@ -33,6 +43,40 @@ def calculate_sha256(file_obj):
         digest.update(chunk)
 
     return digest.hexdigest()
+
+
+def load_evidence(evidence):
+    try:
+        with default_storage.open(evidence.storage_key, "rb") as stored_file:
+            stored_data = stored_file.read()
+    except FileNotFoundError:
+        raise
+
+    try:
+        plaintext = decrypt_evidence(
+            stored_data,
+            evidence.id,
+            evidence.encryption_version,
+        )
+    except ValueError as exc:
+        raise EvidenceIntegrityError from exc
+
+    return plaintext, hashlib.sha256(plaintext).hexdigest()
+
+
+def mark_evidence_verified(evidence, matches):
+    evidence.verification_status = (
+        Evidence.VerificationStatus.VERIFIED
+        if matches
+        else Evidence.VerificationStatus.MISMATCH
+    )
+    evidence.last_verified_at = timezone.now()
+    evidence.save(
+        update_fields=[
+            "verification_status",
+            "last_verified_at",
+        ]
+    )
 
 
 class EvidenceUploadView(APIView):
@@ -60,6 +104,7 @@ class EvidenceUploadView(APIView):
                 "mime_type": item.mime_type,
                 "file_size_bytes": item.file_size_bytes,
                 "verification_status": item.verification_status,
+                "encrypted_at_rest": item.encryption_version > 0,
                 "uploaded_at": item.uploaded_at,
                 "file_url": f"/api/evidence/{item.id}/file/",
                 "metadata": item.metadata,
@@ -98,17 +143,23 @@ class EvidenceUploadView(APIView):
 
         sha256_hash = calculate_sha256(uploaded_file)
         uploaded_file.seek(0)
+        evidence_id = uuid.uuid4()
 
         saved_key = None
 
         try:
+            encrypted_data = encrypt_evidence(
+                uploaded_file.read(),
+                evidence_id,
+            )
             with transaction.atomic():
                 saved_key = default_storage.save(
                     storage_key,
-                    uploaded_file,
+                    ContentFile(encrypted_data),
                 )
 
                 evidence = Evidence.objects.create(
+                    id=evidence_id,
                     incident=incident,
                     uploaded_by=request.user,
                     evidence_type=evidence_type,
@@ -119,6 +170,7 @@ class EvidenceUploadView(APIView):
                     mime_type=mime_type,
                     file_size_bytes=uploaded_file.size,
                     sha256_hash=sha256_hash,
+                    encryption_version=1,
                     verification_status=(
                         Evidence.VerificationStatus.PENDING
                     ),
@@ -129,6 +181,12 @@ class EvidenceUploadView(APIView):
                             "trusted_contact_ids"
                         ],
                     },
+                )
+                record_incident_audit(
+                    actor=request.user,
+                    incident=incident,
+                    action=IncidentAuditEvent.Action.EVIDENCE_UPLOADED,
+                    outcome=IncidentAuditEvent.Outcome.SUCCESS,
                 )
 
         except Exception as exc:
@@ -159,6 +217,7 @@ class EvidenceUploadView(APIView):
                 "mime_type": evidence.mime_type,
                 "file_size_bytes": evidence.file_size_bytes,
                 "sha256_hash": evidence.sha256_hash,
+                "encrypted_at_rest": evidence.encryption_version > 0,
                 "verification_status": evidence.verification_status,
                 "uploaded_at": evidence.uploaded_at,
             },
@@ -191,15 +250,48 @@ class EvidenceAudioView(EvidenceUploadView):
             )
 
         try:
-            audio_file = default_storage.open(evidence.storage_key, "rb")
+            plaintext, current_hash = load_evidence(evidence)
         except FileNotFoundError:
             return Response(
                 {"detail": "The stored audio file is unavailable."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        except EvidenceIntegrityError:
+            mark_evidence_verified(evidence, matches=False)
+            record_incident_audit(
+                actor=request.user,
+                incident=incident,
+                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            )
+            return Response(
+                {"detail": "Evidence integrity verification failed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not hmac.compare_digest(evidence.sha256_hash, current_hash):
+            mark_evidence_verified(evidence, matches=False)
+            record_incident_audit(
+                actor=request.user,
+                incident=incident,
+                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            )
+            return Response(
+                {"detail": "Evidence integrity verification failed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mark_evidence_verified(evidence, matches=True)
+        record_incident_audit(
+            actor=request.user,
+            incident=incident,
+            action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+            outcome=IncidentAuditEvent.Outcome.SUCCESS,
+        )
 
         response = FileResponse(
-            audio_file,
+            io.BytesIO(plaintext),
             content_type=evidence.mime_type or "audio/wav",
         )
         response["Content-Length"] = str(evidence.file_size_bytes)
@@ -241,36 +333,12 @@ class EvidenceVerificationView(APIView):
             now = timezone.now()
 
             try:
-                with default_storage.open(
-                    evidence.storage_key,
-                    "rb",
-                ) as stored_file:
-                    digest = hashlib.sha256()
-
-                    for chunk in iter(
-                        lambda: stored_file.read(1024 * 1024),
-                        b"",
-                    ):
-                        digest.update(chunk)
-
-                current_hash = digest.hexdigest()
-                matches = (
-                        bool(evidence.sha256_hash)
-                        and current_hash == evidence.sha256_hash
-                    )
-                evidence.verification_status = (
-                    Evidence.VerificationStatus.VERIFIED
-                    if matches
-                    else Evidence.VerificationStatus.MISMATCH
+                _, current_hash = load_evidence(evidence)
+                matches = bool(evidence.sha256_hash) and hmac.compare_digest(
+                    current_hash,
+                    evidence.sha256_hash,
                 )
-
-                evidence.last_verified_at = now
-                evidence.save(
-                    update_fields=[
-                        "verification_status",
-                        "last_verified_at",
-                    ]
-                )
+                mark_evidence_verified(evidence, matches)
 
                 results.append({
                     "evidence_id": str(evidence.id),
@@ -279,6 +347,25 @@ class EvidenceVerificationView(APIView):
                     "current_sha256": current_hash,
                     "matches": matches,
                     "verification_status": evidence.verification_status,
+                    "verified_at": now,
+                })
+
+            except EvidenceIntegrityError:
+                evidence.verification_status = (
+                    Evidence.VerificationStatus.MISMATCH
+                )
+                evidence.last_verified_at = now
+                evidence.save(
+                    update_fields=[
+                        "verification_status",
+                        "last_verified_at",
+                    ]
+                )
+                results.append({
+                    "evidence_id": str(evidence.id),
+                    "evidence_type": evidence.evidence_type,
+                    "verification_status": "mismatch",
+                    "matches": False,
                     "verified_at": now,
                 })
 
@@ -381,15 +468,48 @@ class EvidenceFileView(APIView):
             )
 
         try:
-            media_file = default_storage.open(evidence.storage_key, "rb")
+            plaintext, current_hash = load_evidence(evidence)
         except FileNotFoundError:
             return Response(
                 {"detail": "The stored evidence file is unavailable."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        except EvidenceIntegrityError:
+            mark_evidence_verified(evidence, matches=False)
+            record_incident_audit(
+                actor=request.user,
+                incident=evidence.incident,
+                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            )
+            return Response(
+                {"detail": "Evidence integrity verification failed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not hmac.compare_digest(evidence.sha256_hash, current_hash):
+            mark_evidence_verified(evidence, matches=False)
+            record_incident_audit(
+                actor=request.user,
+                incident=evidence.incident,
+                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            )
+            return Response(
+                {"detail": "Evidence integrity verification failed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mark_evidence_verified(evidence, matches=True)
+        record_incident_audit(
+            actor=request.user,
+            incident=evidence.incident,
+            action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
+            outcome=IncidentAuditEvent.Outcome.SUCCESS,
+        )
 
         response = FileResponse(
-            media_file,
+            io.BytesIO(plaintext),
             content_type=evidence.mime_type or "application/octet-stream",
         )
         response["Content-Length"] = str(evidence.file_size_bytes)

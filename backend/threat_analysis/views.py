@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.utils import timezone
 
 from rest_framework import status
@@ -7,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from incidents.models import Incident
+from dashboard.audit import record_incident_audit
+from dashboard.models import IncidentAuditEvent
 
 from .models import ThreatAssessment
 from .serializers import (
@@ -17,26 +20,43 @@ from .services import assess_incident
 
 
 def user_can_access_incident(user, incident):
-    """
-    Replace this function's body with the same authorization
-    logic already used by your incident API.
+    if not user.is_authenticated or not user.is_active:
+        return False
 
-    Do not enable the endpoint with a permissive implementation.
-    """
+    if incident.user_id == user.pk or (
+        incident.device_id
+        and incident.device.owner_id == user.pk
+    ):
+        return True
 
-    raise NotImplementedError(
-        "Connect this function to the existing incident "
-        "authorization logic before enabling this API."
+    if user.is_superuser or (
+        user.is_staff and getattr(user, "role", None) == "admin"
+    ):
+        return True
+
+    return bool(
+        getattr(user, "role", None) == "authority"
+        and getattr(user, "authority_status", None) == "approved"
+        and incident.authority_assignments.filter(
+            authority=user,
+            is_active=True,
+        ).exists()
     )
 
 
 def get_authorized_incident(user, incident_id):
     incident = get_object_or_404(
-        Incident,
+        Incident.objects.select_related("device"),
         pk=incident_id,
     )
 
     if not user_can_access_incident(user, incident):
+        record_incident_audit(
+            actor=user,
+            incident=incident,
+            action=IncidentAuditEvent.Action.ACCESS_DENIED,
+            outcome=IncidentAuditEvent.Outcome.FAILURE,
+        )
         return None
 
     return incident
@@ -46,6 +66,7 @@ class ThreatAssessmentCreateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, incident_id):
 
         serializer = ThreatAssessmentCreateSerializer(
@@ -75,6 +96,7 @@ class ThreatAssessmentCreateView(APIView):
             result = assess_incident(
                 user_selected_level=selected_level,
                 indicators=indicators,
+                description=incident.description,
             )
         except ValueError as exc:
             return Response(
@@ -85,13 +107,25 @@ class ThreatAssessmentCreateView(APIView):
         assessment = ThreatAssessment.objects.create(
             incident=incident,
             assessed_by=request.user,
-            suggested_level=result["level"],
+            suggested_level=result["suggested_level"],
             final_level=result["level"],
             assessment_source=result["source"],
             assessment_reason=result["reason"],
-            indicators=indicators,
+            indicators={
+                **indicators,
+                "keyword_matches": result["keyword_matches"],
+            },
             user_explanation=explanation,
             needs_review=result["needs_review"],
+        )
+        if result["level"] is not None:
+            incident.threat_level = result["level"]
+            incident.save(update_fields=["threat_level", "updated_at"])
+        record_incident_audit(
+            actor=request.user,
+            incident=incident,
+            action=IncidentAuditEvent.Action.THREAT_ASSESSMENT_CREATED,
+            outcome=IncidentAuditEvent.Outcome.SUCCESS,
         )
 
         return Response(
@@ -114,6 +148,7 @@ class ThreatAssessmentReviewView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, assessment_id):
 
         serializer = ThreatAssessmentReviewSerializer(
@@ -142,6 +177,12 @@ class ThreatAssessmentReviewView(APIView):
         # Only the original assessor may review this assessment
         # in this initial implementation.
         if assessment.assessed_by_id != request.user.id:
+            record_incident_audit(
+                actor=request.user,
+                incident=assessment.incident,
+                action=IncidentAuditEvent.Action.ACCESS_DENIED,
+                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            )
             return Response(
                 {
                     "detail": (
@@ -186,6 +227,7 @@ class ThreatAssessmentReviewView(APIView):
         assessment.user_explanation = explanation
         assessment.needs_review = False
         assessment.reviewed_at = timezone.now()
+        assessment.reviewed_by = request.user
 
         assessment.save(
             update_fields=[
@@ -194,7 +236,18 @@ class ThreatAssessmentReviewView(APIView):
                 "user_explanation",
                 "needs_review",
                 "reviewed_at",
+                "reviewed_by",
             ]
+        )
+        if assessment.final_level is not None:
+            incident = assessment.incident
+            incident.threat_level = assessment.final_level
+            incident.save(update_fields=["threat_level", "updated_at"])
+        record_incident_audit(
+            actor=request.user,
+            incident=assessment.incident,
+            action=IncidentAuditEvent.Action.THREAT_ASSESSMENT_REVIEWED,
+            outcome=IncidentAuditEvent.Outcome.SUCCESS,
         )
 
         return Response(

@@ -1,3 +1,4 @@
+import math
 import uuid
 
 from rest_framework import serializers
@@ -20,6 +21,11 @@ class IncidentSerializer(serializers.ModelSerializer):
     is_sos = serializers.BooleanField(
         required=False,
         default=False,
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=5000,
     )
 
     class Meta:
@@ -159,6 +165,22 @@ class IncidentSerializer(serializers.ModelSerializer):
         if value is not None and not -180 <= value <= 180:
             raise serializers.ValidationError(
                 "Longitude must be between -180 and 180."
+            )
+        return value
+
+    def validate_latitude(self, value):
+        if value is not None and not -90 <= value <= 90:
+            raise serializers.ValidationError(
+                "Latitude must be between -90 and 90."
+            )
+        return value
+
+    def validate_location_accuracy_m(self, value):
+        if value is not None and (
+            not math.isfinite(value) or value < 0
+        ):
+            raise serializers.ValidationError(
+                "Location accuracy must be a finite, non-negative value."
             )
         return value
 

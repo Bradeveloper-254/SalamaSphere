@@ -17,6 +17,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from devices.models import WearableDevice
+from dashboard.audit import record_incident_audit
+from dashboard.models import IncidentAuditEvent
 from emergency_notifications.services import (
     queue_emergency_notifications,
 )
@@ -32,6 +34,8 @@ from .serializers import (
     IncidentAssignmentCreateSerializer,
     IncidentSerializer,
 )
+from threat_analysis.models import ThreatAssessment
+from threat_analysis.services import assess_incident
 
 User = get_user_model()
 
@@ -102,9 +106,37 @@ class IncidentListCreateView(generics.ListCreateAPIView):
 
         try:
             with transaction.atomic():
+                if device is not None:
+                    device.last_seen_at = timezone.now()
+                    device.save(update_fields=["last_seen_at", "updated_at"])
                 incident = serializer.save(
                     user=request.user,
                     device=device,
+                )
+                assessment = assess_incident(
+                    user_selected_level=incident.threat_level,
+                    description=incident.description,
+                )
+                if assessment["level"] is not None:
+                    incident.threat_level = assessment["level"]
+                    incident.save(update_fields=["threat_level", "updated_at"])
+                ThreatAssessment.objects.create(
+                    incident=incident,
+                    assessed_by=request.user,
+                    suggested_level=assessment["suggested_level"],
+                    final_level=assessment["level"],
+                    assessment_source=assessment["source"],
+                    assessment_reason=assessment["reason"],
+                    indicators={
+                        "keyword_matches": assessment["keyword_matches"],
+                    },
+                    needs_review=assessment["needs_review"],
+                )
+                record_incident_audit(
+                    actor=request.user,
+                    incident=incident,
+                    action=IncidentAuditEvent.Action.INCIDENT_CREATED,
+                    outcome=IncidentAuditEvent.Outcome.SUCCESS,
                 )
                 queue_emergency_notifications(incident)
                 notify_new_incident(incident)

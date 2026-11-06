@@ -1,4 +1,11 @@
 from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
+from rest_framework.test import APIClient
+
+from incidents.models import Incident
 
 from .services import assess_incident
 
@@ -76,3 +83,70 @@ class ThreatAssessmentServiceTests(SimpleTestCase):
         )
 
         self.assertIsNone(result["level"])
+
+    def test_keyword_match_escalates_but_never_downgrades_selected_level(self):
+        result = assess_incident(
+            user_selected_level="low",
+            description="They threatened to kill me.",
+        )
+
+        self.assertEqual(result["level"], "high")
+        self.assertEqual(result["suggested_level"], "high")
+        self.assertEqual(result["source"], "rules")
+        self.assertTrue(result["needs_review"])
+        self.assertIn("threatened", result["keyword_matches"]["medium"])
+        self.assertIn("kill me", result["keyword_matches"]["high"])
+
+
+class ThreatAssessmentApiTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(
+            username="threat_owner",
+            email="threat_owner@example.test",
+            password="test-password",
+        )
+        self.other_user = user_model.objects.create_user(
+            username="threat_other",
+            email="threat_other@example.test",
+            password="test-password",
+        )
+        self.incident = Incident.objects.create(
+            user=self.owner,
+            source=Incident.IncidentSource.MOBILE,
+            threat_level=Incident.ThreatLevel.LOW,
+            description="They threatened to kill me.",
+            occurred_at=timezone.now(),
+        )
+        self.client = APIClient()
+
+    def test_owner_can_create_assessment_for_owned_incident(self):
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.post(
+            reverse(
+                "threat-assessment-create",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["final_level"], "high")
+        self.incident.refresh_from_db()
+        self.assertEqual(self.incident.threat_level, "high")
+
+    def test_non_owner_cannot_create_assessment(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "threat-assessment-create",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404)

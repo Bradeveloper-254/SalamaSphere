@@ -64,6 +64,10 @@ class Evidence(models.Model):
         blank=True,
     )
 
+    encryption_version = models.PositiveSmallIntegerField(
+        default=0,
+    )
+
     verification_status = models.CharField(
         max_length=20,
         choices=VerificationStatus.choices,

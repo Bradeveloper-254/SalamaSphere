@@ -1,14 +1,20 @@
+import hashlib
+from pathlib import Path
 import tempfile
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.files.storage import default_storage
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from incidents.models import Incident
+from dashboard.models import IncidentAuditEvent
 from trusted_contacts.models import TrustedContact
 
 from .models import Evidence
@@ -65,6 +71,20 @@ class IncidentEvidenceApiTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         evidence = Evidence.objects.get(incident=self.incident)
         self.assertEqual(evidence.evidence_type, Evidence.EvidenceType.VIDEO)
+        self.assertEqual(evidence.encryption_version, 1)
+        self.assertEqual(
+            evidence.sha256_hash,
+            hashlib.sha256(b"video-data").hexdigest(),
+        )
+        with default_storage.open(evidence.storage_key, "rb") as stored:
+            self.assertNotEqual(stored.read(), b"video-data")
+        self.assertTrue(
+            IncidentAuditEvent.objects.filter(
+                incident=self.incident,
+                action=IncidentAuditEvent.Action.EVIDENCE_UPLOADED,
+                outcome=IncidentAuditEvent.Outcome.SUCCESS,
+            ).exists()
+        )
 
         listing = self.client.get(self.upload_url)
         self.assertEqual(listing.status_code, 200)
@@ -78,6 +98,92 @@ class IncidentEvidenceApiTests(TestCase):
         )
         self.assertEqual(file_response.status_code, 200)
         self.assertEqual(b"".join(file_response.streaming_content), b"video-data")
+
+        verification = self.client.get(
+            reverse(
+                "evidence-verify",
+                kwargs={"incident_id": self.incident.id},
+            )
+        )
+        self.assertEqual(verification.status_code, 200)
+        self.assertTrue(verification.data["verified"])
+
+    def test_tampered_encrypted_file_is_not_returned(self):
+        response = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile(
+                    "incident.mp4",
+                    b"video-data",
+                    content_type="video/mp4",
+                ),
+                "share_with": "authorities",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        evidence = Evidence.objects.get(incident=self.incident)
+        stored_path = Path(self.media_directory.name) / evidence.storage_key
+        with stored_path.open("r+b") as stored:
+            stored.seek(-1, 2)
+            final_byte = stored.read(1)
+            stored.seek(-1, 2)
+            stored.write(bytes([final_byte[0] ^ 1]))
+
+        file_response = self.client.get(
+            reverse(
+                "evidence-file",
+                kwargs={"evidence_id": evidence.id},
+            )
+        )
+
+        self.assertEqual(file_response.status_code, 409)
+        evidence.refresh_from_db()
+        self.assertEqual(
+            evidence.verification_status,
+            Evidence.VerificationStatus.MISMATCH,
+        )
+
+    def test_management_command_encrypts_legacy_plaintext_evidence(self):
+        response = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile(
+                    "incident.mp4",
+                    b"legacy-video-data",
+                    content_type="video/mp4",
+                ),
+                "share_with": "authorities",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        evidence = Evidence.objects.get(incident=self.incident)
+        default_storage.delete(evidence.storage_key)
+        default_storage.save(
+            evidence.storage_key,
+            ContentFile(b"legacy-video-data"),
+        )
+        evidence.encryption_version = 0
+        evidence.save(update_fields=["encryption_version"])
+
+        call_command("encrypt_legacy_evidence")
+
+        evidence.refresh_from_db()
+        self.assertEqual(evidence.encryption_version, 1)
+        with default_storage.open(evidence.storage_key, "rb") as stored:
+            self.assertNotEqual(stored.read(), b"legacy-video-data")
+        file_response = self.client.get(
+            reverse(
+                "evidence-file",
+                kwargs={"evidence_id": evidence.id},
+            )
+        )
+        self.assertEqual(file_response.status_code, 200)
+        self.assertEqual(
+            b"".join(file_response.streaming_content),
+            b"legacy-video-data",
+        )
 
     def test_upload_rejects_contacts_not_owned_by_the_user(self):
         contact = TrustedContact.objects.create(

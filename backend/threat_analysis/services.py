@@ -1,21 +1,81 @@
+import re
 from typing import Any
 
 
 THREAT_LEVELS = {"low", "medium", "high"}
+_SEVERITY = {"low": 1, "medium": 2, "high": 3}
+
+_KEYWORD_LEVELS = {
+    "high": (
+        "kill you",
+        "kill me",
+        "going to kill",
+        "i will kill",
+        "murder",
+        "rape",
+        "sexual assault",
+        "kidnap",
+        "strangle",
+        "choke",
+        "gun",
+        "knife",
+        "stab",
+    ),
+    "medium": (
+        "threaten",
+        "threatened",
+        "stalk",
+        "follow me",
+        "blackmail",
+        "coerce",
+        "force me",
+        "forced me",
+        "beat me",
+        "hit me",
+        "assault",
+        "harass",
+    ),
+    "low": (
+        "insult",
+        "unwanted message",
+        "inappropriate comment",
+        "verbal abuse",
+    ),
+}
+
+
+def _keyword_matches(description: str) -> dict[str, list[str]]:
+    normalized_description = description.casefold()
+    matches = {}
+
+    for level, keywords in _KEYWORD_LEVELS.items():
+        found = [
+            keyword
+            for keyword in keywords
+            if re.search(
+                rf"(?<!\w){re.escape(keyword)}(?!\w)",
+                normalized_description,
+            )
+        ]
+        if found:
+            matches[level] = found
+
+    return matches
 
 
 def assess_incident(
     user_selected_level: str | None = None,
     indicators: dict[str, Any] | None = None,
+    description: str = "",
 ) -> dict[str, Any]:
     """
     Produce a preliminary threat assessment.
 
     This is a rules-based aid, not a validated prediction model.
 
-    A survivor-selected level takes precedence over the automated
-    suggestion. Missing or ambiguous information must not be
-    interpreted as proof that the survivor is safe.
+    Automated rules may raise, but never lower, the survivor-selected
+    level. Missing or ambiguous information is not proof that the
+    survivor is safe.
     """
 
     indicators = indicators or {}
@@ -29,14 +89,10 @@ def assess_incident(
                 "Threat level must be low, medium, or high."
             )
 
-        return {
-            "level": selected_level,
-            "source": "user_selected",
-            "reason": "The survivor selected this threat level.",
-            "needs_review": False,
-        }
+    else:
+        selected_level = None
 
-    # Only explicit Boolean True values activate these rules.
+    keyword_matches = _keyword_matches(description)
     immediate_danger = (
         indicators.get("immediate_danger") is True
     )
@@ -59,55 +115,81 @@ def assess_incident(
         indicators.get("inappropriate_behavior") is True
     )
 
-    # A reported immediate danger or serious threat receives
-    # a high-priority preliminary classification.
+    indicator_level = None
     if immediate_danger or serious_threat:
-        return {
-            "level": "high",
-            "source": "rules",
-            "reason": (
-                "The report includes an immediate-danger "
-                "indicator or a serious-threat indicator."
-            ),
-            "needs_review": True,
-        }
+        indicator_level = "high"
+    elif credible_threat or coercion or repeated_harassment:
+        indicator_level = "medium"
+    elif inappropriate_behavior:
+        indicator_level = "low"
 
-    # Concerning threats, coercion, or repeated harassment.
-    if (
-        credible_threat
-        or coercion
-        or repeated_harassment
+    keyword_level = max(
+        keyword_matches,
+        key=lambda level: _SEVERITY[level],
+        default=None,
+    )
+    automated_level = max(
+        (level for level in (indicator_level, keyword_level) if level),
+        key=lambda level: _SEVERITY[level],
+        default=None,
+    )
+
+    if selected_level and (
+        automated_level is None
+        or _SEVERITY[selected_level] >= _SEVERITY[automated_level]
     ):
         return {
-            "level": "medium",
-            "source": "rules",
+            "level": selected_level,
+            "suggested_level": automated_level,
+            "source": "user_selected",
             "reason": (
-                "The report includes an indicator of concerning "
-                "harassment, coercion, or threats."
+                "The survivor selected this threat level. "
+                "Automated keyword and indicator checks did not "
+                "identify a higher level."
             ),
-            "needs_review": True,
+            "needs_review": False,
+            "keyword_matches": keyword_matches,
         }
 
-    # A reported lower-severity incident.
-    if inappropriate_behavior:
+    if automated_level:
+        reason = (
+            "Keyword or incident-indicator checks identified a "
+            "preliminary threat level. Human review is required."
+        )
+        if selected_level:
+            reason += (
+                " The automated result raised the survivor-selected "
+                "level to avoid understating the reported risk."
+            )
         return {
-            "level": "low",
+            "level": automated_level,
+            "suggested_level": automated_level,
             "source": "rules",
-            "reason": (
-                "The report includes inappropriate behaviour "
-                "or lower-severity harassment."
-            ),
+            "reason": reason,
             "needs_review": True,
+            "keyword_matches": keyword_matches,
+        }
+
+    if selected_level:
+        return {
+            "level": selected_level,
+            "suggested_level": None,
+            "source": "user_selected",
+            "reason": "The survivor selected this threat level.",
+            "needs_review": False,
+            "keyword_matches": keyword_matches,
         }
 
     # Unknown information must not be silently classified as safe.
     return {
         "level": None,
+        "suggested_level": None,
         "source": "insufficient_information",
         "reason": (
             "There is not enough information to suggest a "
-            "classification. The survivor can select a level "
-            "or provide more information."
+            "classification. The survivor can select a level or "
+            "provide more information."
         ),
         "needs_review": True,
+        "keyword_matches": keyword_matches,
     }

@@ -10,6 +10,7 @@ class EvidenceAdmin(admin.ModelAdmin):
         "incident",
         "evidence_type",
         "original_filename",
+        "encryption_version",
         "verification_status",
         "uploaded_at",
     )
@@ -28,5 +29,6 @@ class EvidenceAdmin(admin.ModelAdmin):
     readonly_fields = (
         "id",
         "sha256_hash",
+        "encryption_version",
         "uploaded_at",
     )

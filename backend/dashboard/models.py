@@ -41,13 +41,33 @@ class IncidentReviewNote(models.Model):
         
 class IncidentAuditEvent(models.Model):
     class Action(models.TextChoices):
+        INCIDENT_CREATED = (
+            "incident_created",
+            "Incident created",
+        )
         INCIDENT_VIEWED = (
             "incident_viewed",
             "Incident viewed",
         )
+        EVIDENCE_UPLOADED = (
+            "evidence_uploaded",
+            "Evidence uploaded",
+        )
+        EVIDENCE_ACCESSED = (
+            "evidence_accessed",
+            "Evidence accessed",
+        )
         EVIDENCE_VERIFICATION = (
             "evidence_verification",
             "Evidence verification",
+        )
+        THREAT_ASSESSMENT_CREATED = (
+            "threat_assessment_created",
+            "Threat assessment created",
+        )
+        THREAT_ASSESSMENT_REVIEWED = (
+            "threat_assessment_reviewed",
+            "Threat assessment reviewed",
         )
         REVIEW_NOTE_CREATED = (
             "review_note_created",

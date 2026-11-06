@@ -9,7 +9,10 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from devices.models import WearableDevice
+from dashboard.models import IncidentAuditEvent
 from emergency_notifications.models import EmergencyNotification
+from notifications.models import Notification
+from threat_analysis.models import ThreatAssessment
 from trusted_contacts.models import TrustedContact
 from .models import Incident
 
@@ -62,6 +65,63 @@ class IncidentAPITest(TestCase):
             ).count(),
             1,
         )
+        incident = Incident.objects.get(client_event_id=event_id)
+        self.device.refresh_from_db()
+        self.assertIsNotNone(self.device.last_seen_at)
+        assessment = ThreatAssessment.objects.get(incident=incident)
+        self.assertEqual(assessment.final_level, incident.threat_level)
+        self.assertTrue(
+            IncidentAuditEvent.objects.filter(
+                incident=incident,
+                action=IncidentAuditEvent.Action.INCIDENT_CREATED,
+                outcome=IncidentAuditEvent.Outcome.SUCCESS,
+            ).exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=self.user,
+                incident=incident,
+            ).exists()
+        )
+
+    def test_keywords_escalate_a_reported_threat_and_are_saved(self):
+        response = self.client.post(
+            self.endpoint,
+            {
+                **self.build_payload(str(uuid.uuid4())),
+                "threat_level": "low",
+                "description": "The person threatened to kill me.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        incident = Incident.objects.get(pk=response.data["id"])
+        assessment = ThreatAssessment.objects.get(incident=incident)
+        self.assertEqual(incident.threat_level, Incident.ThreatLevel.HIGH)
+        self.assertEqual(assessment.suggested_level, "high")
+        self.assertTrue(assessment.needs_review)
+        self.assertIn(
+            "kill me",
+            assessment.indicators["keyword_matches"]["high"],
+        )
+        self.assertIn(
+            "threatened",
+            assessment.indicators["keyword_matches"]["medium"],
+        )
+
+    def test_incident_rejects_invalid_coordinates_and_accuracy(self):
+        payload = self.build_payload(str(uuid.uuid4()))
+        payload.update(latitude=91, longitude=36, location_accuracy_m=-1)
+
+        response = self.client.post(
+            self.endpoint,
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Incident.objects.exists())
 
     def test_mobile_report_can_be_created_without_a_wearable(self):
         response = self.client.post(
@@ -132,6 +192,30 @@ class IncidentAPITest(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_user_cannot_submit_with_another_users_device(self):
+        other_user = User.objects.create_user(
+            username="foreign_device_owner",
+            email="foreign_device@example.com",
+            password="test-password",
+        )
+        foreign_device = WearableDevice.objects.create(
+            owner=other_user,
+            device_name="Another user's wearable",
+            device_identifier="SALAMA-FOREIGN-001",
+            status=WearableDevice.DeviceStatus.ACTIVE,
+        )
+        payload = self.build_payload(str(uuid.uuid4()))
+        payload["device_identifier"] = foreign_device.device_identifier
+
+        response = self.client.post(
+            self.endpoint,
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Incident.objects.exists())
 
     def test_wearable_sos_queues_notifications_for_consented_contact(self):
         TrustedContact.objects.create(
