@@ -104,15 +104,6 @@ class IncidentSerializer(serializers.ModelSerializer):
                 )
             })
 
-        if (
-            attrs.get("is_sos", False)
-            and attrs.get("source", Incident.IncidentSource.MOBILE)
-            != Incident.IncidentSource.WEARABLE
-        ):
-            raise serializers.ValidationError({
-                "is_sos": "SOS incidents must originate from a wearable."
-            })
-
         return attrs
 
     def create(self, validated_data):
@@ -137,7 +128,6 @@ class IncidentSerializer(serializers.ModelSerializer):
             elif (
                 validated_data.get("source")
                 == Incident.IncidentSource.WEARABLE
-                or validated_data.get("is_sos", False)
             ):
                 raise serializers.ValidationError({
                     "device_identifier": "This field is required."

@@ -1,7 +1,7 @@
 #ifndef BLE_CONFIG_H
 #define BLE_CONFIG_H
 
-// This protocol is shared with lib/services/ble_service.dart.
+// Shared BLE protocol identifiers used by the wearable and mobile client.
 #define SALAMA_SERVICE_UUID "7b6a0001-7d42-4a8e-9b31-2f4c8a6e1000"
 #define DEVICE_ID_UUID "7b6a0002-7d42-4a8e-9b31-2f4c8a6e1000"
 #define SOS_EVENT_UUID "7b6a0003-7d42-4a8e-9b31-2f4c8a6e1000"
@@ -13,7 +13,7 @@
 #define BATTERY_STATUS_UUID "7b6a0009-7d42-4a8e-9b31-2f4c8a6e1000"
 
 #define DEVICE_NAME "SalamaSphere"
-#define DEVICE_ID "SALAMA-DEVICE-001"
+#define DEVICE_ID_PREFIX "SALAMA-DEVICE-"
 
 // Change these four values to match the actual ESP32-S3 wiring.
 #define I2S_PORT I2S_NUM_0
@@ -30,9 +30,6 @@
 #define AUDIO_RECORD_SECONDS 10
 #define AUDIO_CHANNELS 1
 #define AUDIO_BITS_PER_SAMPLE 16
-#define AUDIO_FILE_PATH "/sos_latest.wav"
 #define AUDIO_MIME_TYPE "audio/wav"
-#define AUDIO_CHUNK_SIZE 180
 
 #endif
-

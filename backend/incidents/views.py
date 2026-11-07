@@ -60,11 +60,8 @@ class IncidentListCreateView(generics.ListCreateAPIView):
 
         if (
             not device_identifier
-            and (
-                serializer.validated_data.get("source")
-                == Incident.IncidentSource.WEARABLE
-                or serializer.validated_data.get("is_sos", False)
-            )
+            and serializer.validated_data.get("source")
+            == Incident.IncidentSource.WEARABLE
         ):
             return Response(
                 {"device_identifier": "This field is required."},

@@ -17,6 +17,10 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework.throttling import AnonRateThrottle
 from .serializers import RegistrationSerializer
+from notifications.services import (
+    create_system_notification,
+    get_administrators,
+)
 logger = logging.getLogger(__name__)
 
 class RegistrationView(APIView):
@@ -34,6 +38,29 @@ class RegistrationView(APIView):
             )
 
         user = serializer.save()
+        if user.role == user.Role.SURVIVOR:
+            create_system_notification(
+                recipient=user,
+                title="Welcome to SalamaSphere",
+                message=(
+                    "SalamaSphere helps you share incidents and evidence "
+                    "with designated authorities, keep trusted contacts "
+                    "informed during SOS events, and follow case updates. "
+                    "Add trusted contacts, keep your location available "
+                    "during an emergency, and use the app to submit incidents "
+                    "and review notifications."
+                ),
+            )
+        elif user.role == user.Role.AUTHORITY:
+            for administrator in get_administrators():
+                create_system_notification(
+                    recipient=administrator,
+                    title="Authority account requires review",
+                    message=(
+                        f"{user.get_username()} created an authority account "
+                        "that is awaiting approval."
+                    ),
+                )
 
         return Response(
             {

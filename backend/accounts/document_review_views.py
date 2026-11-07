@@ -16,6 +16,10 @@ from .models import (
 )
 from .permissions import IsSalamaSphereAdmin
 from .serializers import AuthorityDocumentReviewSerializer
+from notifications.services import (
+    create_system_notification,
+    get_administrators,
+)
 
 
 class AuthorityVerificationDocumentListView(APIView):
@@ -142,6 +146,26 @@ class AuthorityVerificationDocumentDetailView(APIView):
             "reviewer",
             "reviewed_at",
         ])
+        decision_label = "accepted" if decision == "accepted" else "rejected"
+        create_system_notification(
+            recipient=document.authority,
+            title=f"Verification document {decision_label}",
+            message=(
+                f"Your {document.get_document_type_display()} was "
+                f"{decision_label}."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+        )
+        for administrator in get_administrators():
+            create_system_notification(
+                recipient=administrator,
+                title=f"Verification document {decision_label}",
+                message=(
+                    f"You and the other administrators {decision_label} "
+                    f"{document.authority.get_username()}'s "
+                    f"{document.get_document_type_display()}."
+                ),
+            )
 
         return Response({
             "message": "Verification document review recorded.",

@@ -1,4 +1,4 @@
-from django.shortcuts import render
+from django.db.models.deletion import ProtectedError
 
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
@@ -13,7 +13,8 @@ class TrustedContactListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         return TrustedContact.objects.filter(
-            user=self.request.user
+            user=self.request.user,
+            is_active=True,
         ).order_by("-created_at")
 
 
@@ -23,5 +24,13 @@ class TrustedContactDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return TrustedContact.objects.filter(
-            user=self.request.user
+            user=self.request.user,
+            is_active=True,
         )
+
+    def perform_destroy(self, instance):
+        try:
+            instance.delete()
+        except ProtectedError:
+            instance.is_active = False
+            instance.save(update_fields=["is_active", "updated_at"])

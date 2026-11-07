@@ -4,6 +4,7 @@
 #include <driver/i2s.h>
 #include <esp_system.h>
 #include <NimBLEDevice.h>
+#include "ble_config.h"
 
 // ============================================================
 // SALAMASPHERE - DAY 9 (v1.3.0)
@@ -13,18 +14,18 @@
 // Library: NimBLE-Arduino 2.5.1
 // ============================================================
 //
-// PROTOCOL SUMMARY (all commands are written to TRANSFER_ACK_UUID)
+// PROTOCOL SUMMARY
 //
 //   Phone -> Device (write):
-//     GET:<event_id>                  full file from byte 0
-//     RESUME:<event_id>:<byteOffset>  continue after a dropped link
-//     ACK:<seq>                       cumulative: chunks 0..seq received
-//     ABORT                           stop the current transfer
-//     STATUS                          report recording status
-//     LIST                            list WAV files stored on the SD card
-//     DELETE:<event_id>               delete a file (after you verified it)
+//     GET:<event_id>                  on AUDIO_CONTROL_UUID
+//     RESUME:<event_id>:<byteOffset>  on AUDIO_CONTROL_UUID
+//     ACK:<seq>                       on TRANSFER_ACK_UUID
+//     ABORT                           on AUDIO_CONTROL_UUID
+//     STATUS                          on AUDIO_CONTROL_UUID
+//     LIST                            on AUDIO_CONTROL_UUID
+//     DELETE:<event_id>               on AUDIO_CONTROL_UUID
 //
-//   Device -> Phone (notify on FILE_TRANSFER_UUID):
+//   Device -> Phone (notify on AUDIO_DATA_UUID):
 //     START:<id>:<fileSize>:<totalChunks>:<chunkSize>:<startOffset>:<crc32hex>
 //     <binary chunk>  = 4-byte seq (LE) + 2-byte len (LE) + payload
 //     COMPLETE:<id>:<fileSize>:<totalChunks>:<crc32hex>
@@ -39,39 +40,28 @@
 //   REQUIREMENTS ON THE PHONE
 //     1. Request MTU 247 right after connecting (control messages
 //        are longer than the 20 bytes a default MTU of 23 allows).
-//     2. Enable notifications on FILE_TRANSFER_UUID first.
+//     2. Enable notifications on AUDIO_DATA_UUID first.
 //     3. ACK in order. If a chunk arrives out of order or duplicated,
 //        drop it and re-send ACK for the last in-order sequence.
 // ============================================================
 
 // ---------------- HARDWARE PINS -----------------------------
 
-#define SOS_BUTTON_PIN 4
-
 #define GREEN_LED_PIN 5
 #define RED_LED_PIN   6
-
-#define I2S_BCLK 15
-#define I2S_WS   16
-#define I2S_DIN  17
 
 #define SD_CS    10
 #define SD_MOSI  11
 #define SD_SCLK  12
 #define SD_MISO  13
 
-// ---------------- DEVICE CONFIGURATION ----------------------
-
-#define DEVICE_NAME      "SalamaSphere"
-#define DEVICE_ID        "SALAMA-DEVICE-001"
 #define FIRMWARE_VERSION "1.3.0"
 
 // ---------------- AUDIO CONFIGURATION -----------------------
 
-#define SAMPLE_RATE               16000
-#define RECORD_SECONDS            10
-#define BITS_PER_SAMPLE           16
-#define AUDIO_CHANNELS            1
+#define SAMPLE_RATE               AUDIO_SAMPLE_RATE
+#define RECORD_SECONDS            AUDIO_RECORD_SECONDS
+#define BITS_PER_SAMPLE           AUDIO_BITS_PER_SAMPLE
 #define AUDIO_SAMPLES_PER_BUFFER  256
 
 // ---------------- BUTTON CONFIGURATION ----------------------
@@ -108,31 +98,6 @@ enum ChunkResult {
 
 // ---------------- BLE UUIDS ----------------------------------
 
-#define SERVICE_UUID \
-  "7b6a0001-7d42-4a8e-9b31-2f4c8a6e1000"
-
-#define DEVICE_ID_UUID \
-  "7b6a0002-7d42-4a8e-9b31-2f4c8a6e1000"
-
-#define SOS_EVENT_UUID \
-  "7b6a0003-7d42-4a8e-9b31-2f4c8a6e1000"
-
-#define RECORDING_STATUS_UUID \
-  "7b6a0004-7d42-4a8e-9b31-2f4c8a6e1000"
-
-#define AUDIO_METADATA_UUID \
-  "7b6a0005-7d42-4a8e-9b31-2f4c8a6e1000"
-
-// Phone writes GET, RESUME and ACK commands here.
-#define TRANSFER_ACK_UUID \
-  "7b6a0006-7d42-4a8e-9b31-2f4c8a6e1000"
-
-// Device sends START, binary chunks and COMPLETE here.
-#define FILE_TRANSFER_UUID \
-  "7b6a0007-7d42-4a8e-9b31-2f4c8a6e1000"
-
-#define BATTERY_UUID \
-  "7b6a0008-7d42-4a8e-9b31-2f4c8a6e1000"
 // ---------------- BATTERY CONFIGURATION ---------------------
 // BATTERY_ADC_PIN: GPIO wired to the middle of a 2:1 resistor divider
 // from the battery (+). Set to -1 if no divider is fitted; the app
@@ -162,6 +127,7 @@ NimBLECharacteristic* deviceIdCharacteristic = nullptr;
 NimBLECharacteristic* sosEventCharacteristic = nullptr;
 NimBLECharacteristic* recordingStatusCharacteristic = nullptr;
 NimBLECharacteristic* audioMetadataCharacteristic = nullptr;
+NimBLECharacteristic* audioControlCharacteristic = nullptr;
 NimBLECharacteristic* fileTransferCharacteristic = nullptr;
 NimBLECharacteristic* transferAckCharacteristic = nullptr;
 NimBLECharacteristic* batteryCharacteristic = nullptr;
@@ -196,6 +162,7 @@ uint32_t eventCounter = 0;
 
 String currentEventId = "";
 String currentFilename = "";
+String deviceIdentifier = "";
 
 String recordingStatus = "INITIALIZING";
 
@@ -389,10 +356,17 @@ class TransferCommandCallbacks : public NimBLECharacteristicCallbacks {
     // ----------------------------------------
 
     if (command.startsWith("ACK:")) {
+      if (characteristic != transferAckCharacteristic) {
+        return;
+      }
 
       String sequenceText = command.substring(4);
 
       if (sequenceText.length() == 0 || sequenceText.length() > 9) {
+        return;
+      }
+
+      if (characteristic != audioControlCharacteristic) {
         return;
       }
 
@@ -631,13 +605,13 @@ bool initializeMicrophone() {
 
   i2s_pin_config_t pinConfig = {
 
-    .bck_io_num = I2S_BCLK,
+    .bck_io_num = I2S_BCLK_PIN,
 
-    .ws_io_num = I2S_WS,
+    .ws_io_num = I2S_LRCLK_PIN,
 
     .data_out_num = I2S_PIN_NO_CHANGE,
 
-    .data_in_num = I2S_DIN
+    .data_in_num = I2S_DATA_PIN
   };
 
   result = i2s_set_pin(I2S_NUM_0, &pinConfig);
@@ -956,9 +930,10 @@ void generateSosEvent(unsigned long holdDuration) {
 
   String eventJson =
     String("{\"event_id\":\"") + currentEventId +
-    "\",\"device_identifier\":\"" + DEVICE_ID +
+    "\",\"device_identifier\":\"" + deviceIdentifier +
     "\",\"event_type\":\"SOS\"" +
-    "\",\"recording_status\":\"recording\"}";
+    ",\"call_requested\":true" +
+    ",\"recording_status\":\"recording\"}";
 
   // Stored even when nobody is connected: a phone that reconnects
   // later can READ this characteristic or send LIST.
@@ -1770,6 +1745,16 @@ void setup() {
   Serial.println("SalamaSphere Day 9 BLE Transfer v1.3.0");
   Serial.println("==================================");
 
+  char deviceId[32];
+  snprintf(
+    deviceId,
+    sizeof(deviceId),
+    "%s%012llX",
+    DEVICE_ID_PREFIX,
+    (unsigned long long)ESP.getEfuseMac()
+  );
+  deviceIdentifier = deviceId;
+
   sdReady = initializeSD();
 
   microphoneReady = initializeMicrophone();
@@ -1786,7 +1771,7 @@ void setup() {
 
   bleServer->setCallbacks(new SalamaServerCallbacks());
 
-  salamaService = bleServer->createService(SERVICE_UUID);
+  salamaService = bleServer->createService(SALAMA_SERVICE_UUID);
 
   deviceIdCharacteristic =
     salamaService->createCharacteristic(
@@ -1794,11 +1779,11 @@ void setup() {
       NIMBLE_PROPERTY::READ
     );
 
-  deviceIdCharacteristic->setValue(
-    "{\"device_id\":\"SALAMA-DEVICE-001\","
-    "\"device_name\":\"SalamaSphere\","
-    "\"firmware_version\":\"1.3.0\"}"
-  );
+  String deviceInfo =
+    String("{\"device_id\":\"") + deviceIdentifier +
+    "\",\"device_name\":\"" + DEVICE_NAME +
+    "\",\"firmware_version\":\"" + FIRMWARE_VERSION + "\"}";
+  deviceIdCharacteristic->setValue(deviceInfo.c_str());
 
   sosEventCharacteristic =
     salamaService->createCharacteristic(
@@ -1826,7 +1811,7 @@ void setup() {
 
   fileTransferCharacteristic =
     salamaService->createCharacteristic(
-      FILE_TRANSFER_UUID,
+      AUDIO_DATA_UUID,
       NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
 
@@ -1834,13 +1819,23 @@ void setup() {
 
   fileTransferCharacteristic->setCallbacks(new TransferStreamCallbacks());
 
+  audioControlCharacteristic =
+    salamaService->createCharacteristic(
+      AUDIO_CONTROL_UUID,
+      NIMBLE_PROPERTY::READ |
+      NIMBLE_PROPERTY::WRITE |
+      NIMBLE_PROPERTY::WRITE_NR
+    );
+
+  audioControlCharacteristic->setValue("IDLE");
+  audioControlCharacteristic->setCallbacks(new TransferCommandCallbacks());
+
   transferAckCharacteristic =
     salamaService->createCharacteristic(
       TRANSFER_ACK_UUID,
       NIMBLE_PROPERTY::READ |
       NIMBLE_PROPERTY::WRITE |
-      NIMBLE_PROPERTY::WRITE_NR |
-      NIMBLE_PROPERTY::NOTIFY
+      NIMBLE_PROPERTY::WRITE_NR
     );
 
   transferAckCharacteristic->setValue("IDLE");
@@ -1849,7 +1844,7 @@ void setup() {
 
   batteryCharacteristic =
     salamaService->createCharacteristic(
-      BATTERY_UUID,
+      BATTERY_STATUS_UUID,
       NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
 
@@ -1861,7 +1856,7 @@ void setup() {
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
 
-  advertising->addServiceUUID(SERVICE_UUID);
+  advertising->addServiceUUID(SALAMA_SERVICE_UUID);
 
   advertising->setName(DEVICE_NAME);
 

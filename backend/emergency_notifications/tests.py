@@ -93,17 +93,25 @@ class QueueEmergencyNotificationTests(
             0,
         )
 
-    def test_mobile_sos_does_not_queue_wearable_notifications(self):
+    def test_mobile_sos_queues_notifications(self):
         self.incident.source = Incident.IncidentSource.MOBILE
         self.incident.save(update_fields=["source"])
 
         queued = queue_emergency_notifications(self.incident)
 
-        self.assertEqual(queued, [])
-        self.assertEqual(
-            EmergencyNotification.objects.count(),
-            0,
-        )
+        self.assertEqual(len(queued), 1)
+
+    def test_sms_includes_severity_and_captured_location(self):
+        from .message_builder import build_emergency_message
+
+        self.incident.latitude = -1.286389
+        self.incident.longitude = 36.817223
+        self.incident.save(update_fields=["latitude", "longitude"])
+
+        message = build_emergency_message(self.incident)
+
+        self.assertIn("Threat severity: High", message)
+        self.assertIn("https://maps.google.com/?q=-1.286389,36.817223", message)
 
     def test_contact_without_consent_is_not_queued(self):
         self.contact.consent_confirmed = False

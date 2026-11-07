@@ -23,6 +23,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from incidents.models import Incident
+from notifications.services import create_system_notification
 
 from .crypto import decrypt_evidence, encrypt_evidence
 from .models import Evidence
@@ -205,6 +206,17 @@ class EvidenceUploadView(APIView):
             raise APIException(
                 "Evidence could not be stored."
             ) from exc
+
+        create_system_notification(
+            recipient=incident.user,
+            incident=incident,
+            title="Evidence shared successfully",
+            message=(
+                f"Your {evidence.get_evidence_type_display().lower()} "
+                f"file, {evidence.original_filename}, was uploaded "
+                "successfully and attached to your incident."
+            ),
+        )
 
         return Response(
             {

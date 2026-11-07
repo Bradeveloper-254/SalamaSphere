@@ -8,6 +8,10 @@ from rest_framework.views import APIView
 from .models import AuthorityApprovalLog, AuthorityAccountStatusLog
 from .models import AuthorityApprovalLog
 from .permissions import IsSalamaSphereAdmin
+from notifications.services import (
+    create_system_notification,
+    get_administrators,
+)
 
 User = get_user_model()
 
@@ -116,6 +120,30 @@ class AuthorityDecisionView(APIView):
             decision=self.decision,
             reason=reason,
         )
+        decision_label = (
+            "approved"
+            if self.decision == AuthorityApprovalLog.Decision.APPROVED
+            else "rejected"
+        )
+        create_system_notification(
+            recipient=authority,
+            title=f"Authority account {decision_label}",
+            message=(
+                f"An administrator {decision_label} your authority "
+                "application."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+        )
+        for administrator in get_administrators():
+            create_system_notification(
+                recipient=administrator,
+                title=f"Authority account {decision_label}",
+                message=(
+                    f"You and the other administrators have "
+                    f"{decision_label} {authority.get_username()}'s "
+                    "authority application."
+                ),
+            )
 
         return Response(
             {
@@ -250,6 +278,23 @@ class AuthorityAccountStatusView(APIView):
             action=log_action,
             reason=reason,
         )
+        create_system_notification(
+            recipient=authority,
+            title=f"Authority account {log_action}",
+            message=(
+                f"An administrator {log_action} your account."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+        )
+        for administrator in get_administrators():
+            create_system_notification(
+                recipient=administrator,
+                title=f"Authority account {log_action}",
+                message=(
+                    f"You and the other administrators have {log_action} "
+                    f"{authority.get_username()}'s account."
+                ),
+            )
 
         return Response(
             {

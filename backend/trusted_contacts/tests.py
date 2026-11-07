@@ -1,7 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
+
+from emergency_notifications.models import EmergencyNotification
+from incidents.models import Incident
 
 from .models import TrustedContact
 
@@ -29,6 +33,7 @@ class TrustedContactApiTests(TestCase):
                 "relationship": "Friend",
                 "is_active": True,
                 "receive_sos_alerts": True,
+                "confirm_sos_consent": True,
             },
             format="json",
         )
@@ -42,3 +47,51 @@ class TrustedContactApiTests(TestCase):
         self.assertEqual(len(listed.data), 1)
         self.assertEqual(listed.data[0]["id"], created.data["id"])
         self.assertEqual(listed.data[0]["name"], "Safety contact")
+
+    def test_sos_contact_requires_explicit_consent(self):
+        response = self.client.post(
+            self.endpoint,
+            {
+                "name": "Safety contact",
+                "phone_number": "+254700000000",
+                "receive_sos_alerts": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(TrustedContact.objects.exists())
+
+    def test_deleting_contact_with_delivery_history_deactivates_it(self):
+        created = self.client.post(
+            self.endpoint,
+            {
+                "name": "Safety contact",
+                "phone_number": "+254700000000",
+                "receive_sos_alerts": True,
+                "confirm_sos_consent": True,
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        contact = TrustedContact.objects.get(pk=created.data["id"])
+        incident = Incident.objects.create(
+            user=self.user,
+            occurred_at=timezone.now(),
+        )
+        EmergencyNotification.objects.create(
+            incident=incident,
+            recipient=contact,
+        )
+
+        deleted = self.client.delete(
+            reverse(
+                "trusted-contact-detail",
+                kwargs={"pk": contact.pk},
+            )
+        )
+
+        self.assertEqual(deleted.status_code, 204)
+        contact.refresh_from_db()
+        self.assertFalse(contact.is_active)
+        self.assertEqual(self.client.get(self.endpoint).data, [])

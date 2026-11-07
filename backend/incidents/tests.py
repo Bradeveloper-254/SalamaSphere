@@ -246,9 +246,18 @@ class IncidentAPITest(TestCase):
             1,
         )
 
-    def test_mobile_sos_is_rejected(self):
+    def test_mobile_sos_without_wearable_queues_alerts(self):
+        TrustedContact.objects.create(
+            user=self.user,
+            name="Trusted contact",
+            phone_number="+254700000000",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        )
         payload = self.build_payload(str(uuid.uuid4()))
         payload.update(source="mobile", is_sos=True)
+        payload.pop("device_identifier")
 
         response = self.client.post(
             self.endpoint,
@@ -256,8 +265,15 @@ class IncidentAPITest(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(EmergencyNotification.objects.count(), 0)
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        self.assertTrue(response.data["is_sos"])
+        self.assertEqual(
+            EmergencyNotification.objects.filter(
+                incident_id=response.data["id"],
+                status=EmergencyNotification.Status.PENDING,
+            ).count(),
+            1,
+        )
 
     def test_sos_status_cannot_be_changed_after_creation(self):
         response = self.client.post(

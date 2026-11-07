@@ -23,9 +23,6 @@ def queue_emergency_notifications(incident):
     if not incident.is_sos:
         return []
 
-    if incident.source != Incident.IncidentSource.WEARABLE:
-        return []
-
     contacts = TrustedContact.objects.filter(
         user=incident.user,
         is_active=True,
@@ -75,13 +72,9 @@ def process_emergency_notification(notification_id, provider=None):
         if notification.status != EmergencyNotification.Status.PENDING:
             return notification
 
-        if (
-            not notification.incident.is_sos
-            or notification.incident.source
-            != Incident.IncidentSource.WEARABLE
-        ):
+        if not notification.incident.is_sos:
             notification.status = EmergencyNotification.Status.FAILED
-            notification.last_error = "Incident is not a valid SOS event."
+            notification.last_error = "Incident is not an SOS event."
             notification.save(
                 update_fields=[
                     "status",
