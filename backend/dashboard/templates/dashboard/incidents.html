@@ -137,7 +137,10 @@
         </div>
 
         <div>
-            Signed in as {{ request.user.username }}
+            <a class="link" href="{% url 'dashboard:notifications' %}">
+                Notifications{% if unread_notification_count %} ({{ unread_notification_count }} unread){% endif %}
+            </a>
+            <span class="muted"> · Signed in as {{ request.user.username }}</span>
         </div>
     </header>
 

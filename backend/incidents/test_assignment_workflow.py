@@ -75,6 +75,27 @@ class IncidentAssignmentWorkflowTests(TestCase):
             [nearest.id, farther.id],
         )
 
+    def test_candidates_are_available_without_incident_location(self):
+        authority = self._authority("available_without_location", None, None)
+        incident = Incident.objects.create(
+            user=self.owner,
+            source=Incident.IncidentSource.MOBILE,
+            occurred_at=timezone.now(),
+        )
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.get(
+            reverse("admin-assignable-authorities"),
+            {"incident_id": incident.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in response.data],
+            [authority.id],
+        )
+        self.assertIsNone(response.data[0]["distance_km"])
+
     def test_new_incident_notifies_owner_and_active_administrators(self):
         self.client.force_authenticate(self.owner)
 

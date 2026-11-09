@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notifications | SalamaSphere</title>
+    <style>
+        body { margin: 0; padding: 24px; background: #f4f7fb; color: #172033; font-family: Arial, sans-serif; }
+        main { max-width: 900px; margin: auto; }
+        .back, .action { color: #175cd3; text-decoration: none; }
+        .notification { margin: 14px 0; padding: 18px; background: white; border-radius: 12px; }
+        .unread { border-left: 4px solid #087f8c; }
+        .muted { color: #687386; }
+        button { padding: 9px 13px; border: 0; border-radius: 7px; background: #175cd3; color: white; cursor: pointer; }
+        .message { padding: 12px; margin: 12px 0; border-radius: 8px; background: #e8f7ee; }
+    </style>
+</head>
+<body>
+<main>
+    <a class="back" href="{% url 'dashboard:incident_list' %}">&larr; Back to dashboard</a>
+    <h1>Notifications</h1>
+    <p class="muted">{{ unread_notification_count }} unread notification(s)</p>
+    {% if messages %}
+        {% for message in messages %}<p class="message" role="status">{{ message }}</p>{% endfor %}
+    {% endif %}
+    {% for notification in notifications %}
+        <article class="notification {% if not notification.is_read %}unread{% endif %}">
+            <h2>{{ notification.title }}</h2>
+            <p>{{ notification.message }}</p>
+            <p class="muted">{{ notification.created_at|date:"d M Y, H:i" }}</p>
+            {% if not notification.is_read %}
+                <form method="post" action="{% url 'dashboard:mark_notification_read' notification_id=notification.id %}">
+                    {% csrf_token %}
+                    <button type="submit">Mark as read</button>
+                </form>
+            {% endif %}
+        </article>
+    {% empty %}
+        <p class="muted">You have no notifications.</p>
+    {% endfor %}
+</main>
+</body>
+</html>

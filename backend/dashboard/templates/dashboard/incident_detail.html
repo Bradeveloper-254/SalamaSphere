@@ -118,6 +118,9 @@
     <a class="back" href="{% url 'dashboard:incident_list' %}">
         &larr; Back to dashboard
     </a>
+    <a class="back" href="{% url 'dashboard:notifications' %}">
+        Notifications{% if unread_notification_count %} ({{ unread_notification_count }} unread){% endif %}
+    </a>
     {% if messages %}
     {% for message in messages %}
         <div class="message
@@ -206,6 +209,40 @@
             </p>
         {% endif %}
     </section>
+    {% if can_assign_incident %}
+    <section>
+        <h2>Authority Assignment</h2>
+        {% if active_assignment %}
+            <p>
+                Assigned to
+                <strong>{{ active_assignment.authority.get_username }}</strong>
+                on {{ active_assignment.created_at|date:"d M Y, H:i" }}.
+            </p>
+        {% elif incident.status == "closed" %}
+            <p class="muted">Closed incidents cannot be assigned.</p>
+        {% else %}
+            <form method="post" action="{% url 'dashboard:assign_incident' incident_id=incident.id %}">
+                {% csrf_token %}
+                <label for="authority-id">Available authority</label>
+                <select id="authority-id" name="authority_id" required>
+                    <option value="">Select an authority</option>
+                    {% for authority in assignable_authorities %}
+                        <option value="{{ authority.id }}">
+                            {{ authority.get_username }}
+                            {% if authority.phone_number %} · {{ authority.phone_number }}{% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+                {% if not assignable_authorities %}
+                    <p class="muted">No approved, available authority without an active case is available.</p>
+                {% endif %}
+                <button class="primary-button" type="submit" {% if not assignable_authorities %}disabled{% endif %}>
+                    Assign incident
+                </button>
+            </form>
+        {% endif %}
+    </section>
+    {% endif %}
 
     <section>
         <h2>Audio Evidence</h2>

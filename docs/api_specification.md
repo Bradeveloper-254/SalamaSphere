@@ -62,11 +62,19 @@ GET  /api/incidents/authority/assigned/
 POST /api/incidents/authority/presence/
 POST /api/incidents/authority/assigned/{incident_id}/resolve/
 
-Authorities must be approved and explicitly report availability with a current
-location to appear in assignment candidates. Only authorities without an
-active assignment and with a location updated within the previous 24 hours
-are considered; candidates are returned nearest-first within 100 km. Resolving
-a case closes its incident and releases its active assignment.
+Authorities must be approved, available, and without an active assignment.
+When an incident has coordinates, candidates also need a location updated
+within the previous 24 hours and are returned nearest-first within 100 km.
+When the incident has no coordinates, any otherwise eligible authority is
+returned with a `null` candidate distance. Resolving a case closes its
+incident and releases its active assignment.
+
+The web incident form requests device location through the browser when the
+form opens and refreshes it immediately before submission. It sends captured
+coordinates, accuracy, and the location source with the incident. Browser
+location permission remains under the user's control, and location access
+requires a secure context such as HTTPS or localhost. When location is denied
+or unavailable, the user may retry or explicitly submit without coordinates.
 
 ## Authority Verification Documents
 

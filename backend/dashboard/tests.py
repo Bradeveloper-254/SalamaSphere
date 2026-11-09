@@ -182,6 +182,68 @@ class IncidentDashboardTests(TestCase):
             1,
         )
 
+    def test_admin_can_assign_incident_from_its_detail_route(self):
+        authority = User.objects.create_user(
+            username="dashboard_available_authority",
+            email="dashboard_available_authority@example.test",
+            password="test-password",
+            role=User.Role.AUTHORITY,
+            authority_status=User.AuthorityStatus.APPROVED,
+            is_available=True,
+        )
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse(
+                "dashboard:assign_incident",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {"authority_id": authority.id},
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "dashboard:incident_detail",
+                kwargs={"incident_id": self.incident.id},
+            ),
+        )
+        assignment = self.incident.authority_assignments.get(is_active=True)
+        self.assertEqual(assignment.authority, authority)
+        authority.refresh_from_db()
+        self.assertFalse(authority.is_available)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=authority,
+                title="Case assigned to you",
+            ).exists()
+        )
+
+    def test_admin_can_open_and_mark_own_dashboard_notifications_read(self):
+        notification = Notification.objects.create(
+            recipient=self.admin,
+            title="New incident uploaded",
+            message="An incident is awaiting assignment.",
+        )
+        self.client.force_login(self.admin)
+
+        inbox = self.client.get(reverse("dashboard:notifications"))
+
+        self.assertEqual(inbox.status_code, 200)
+        self.assertContains(inbox, "New incident uploaded")
+        self.assertContains(inbox, "1 unread")
+
+        response = self.client.post(
+            reverse(
+                "dashboard:mark_notification_read",
+                kwargs={"notification_id": notification.id},
+            ),
+        )
+
+        self.assertRedirects(response, reverse("dashboard:notifications"))
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+
     def test_support_worker_without_assignment_cannot_view_incident(self):
         support_worker = User.objects.create_user(
             username="support_worker_one",

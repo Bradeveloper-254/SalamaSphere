@@ -388,17 +388,6 @@ class AdminAssignableAuthorityListView(APIView):
                 {"detail": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        if incident.latitude is None or incident.longitude is None:
-            return Response(
-                {
-                    "detail": (
-                        "This incident has no location, so nearby "
-                        "authorities cannot be determined."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         busy_authority_ids = IncidentAssignment.objects.filter(
             is_active=True,
         ).values_list("authority_id", flat=True)
@@ -407,37 +396,65 @@ class AdminAssignableAuthorityListView(APIView):
             authority_status=User.AuthorityStatus.APPROVED,
             is_active=True,
             is_available=True,
-            last_known_latitude__isnull=False,
-            last_known_longitude__isnull=False,
-            location_updated_at__gte=timezone.now() - timedelta(hours=24),
         ).exclude(id__in=busy_authority_ids)
 
-        candidates = []
-        incident_lat = radians(float(incident.latitude))
-        incident_lon = radians(float(incident.longitude))
-        for authority in authorities:
-            authority_lat = radians(float(authority.last_known_latitude))
-            authority_lon = radians(float(authority.last_known_longitude))
-            lat_delta = authority_lat - incident_lat
-            lon_delta = authority_lon - incident_lon
-            haversine = (
-                sin(lat_delta / 2) ** 2
-                + cos(incident_lat)
-                * cos(authority_lat)
-                * sin(lon_delta / 2) ** 2
+        has_incident_location = (
+            incident.latitude is not None
+            and incident.longitude is not None
+        )
+        if has_incident_location:
+            authorities = authorities.filter(
+                last_known_latitude__isnull=False,
+                last_known_longitude__isnull=False,
+                location_updated_at__gte=timezone.now() - timedelta(hours=24),
             )
-            distance_km = 6371 * 2 * asin(sqrt(haversine))
-            if distance_km <= 100:
+
+        candidates = []
+        incident_lat = (
+            radians(float(incident.latitude))
+            if has_incident_location
+            else None
+        )
+        incident_lon = (
+            radians(float(incident.longitude))
+            if has_incident_location
+            else None
+        )
+        for authority in authorities:
+            distance_km = None
+            if has_incident_location:
+                authority_lat = radians(float(authority.last_known_latitude))
+                authority_lon = radians(float(authority.last_known_longitude))
+                lat_delta = authority_lat - incident_lat
+                lon_delta = authority_lon - incident_lon
+                haversine = (
+                    sin(lat_delta / 2) ** 2
+                    + cos(incident_lat)
+                    * cos(authority_lat)
+                    * sin(lon_delta / 2) ** 2
+                )
+                distance_km = 6371 * 2 * asin(sqrt(haversine))
+
+            if distance_km is None or distance_km <= 100:
                 candidates.append({
                     "id": authority.id,
                     "username": authority.username,
                     "phone_number": authority.phone_number,
                     "latitude": authority.last_known_latitude,
                     "longitude": authority.last_known_longitude,
-                    "distance_km": round(distance_km, 1),
+                    "distance_km": (
+                        round(distance_km, 1)
+                        if distance_km is not None
+                        else None
+                    ),
                     "location_updated_at": authority.location_updated_at,
                 })
-        candidates.sort(key=lambda authority: authority["distance_km"])
+        candidates.sort(
+            key=lambda authority: (
+                authority["distance_km"] is None,
+                authority["distance_km"] or 0,
+            )
+        )
         return Response(candidates)
 
 
