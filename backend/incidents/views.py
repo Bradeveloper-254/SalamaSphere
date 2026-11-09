@@ -40,14 +40,26 @@ from threat_analysis.services import assess_incident
 User = get_user_model()
 
 
+def is_incident_admin(user):
+    return user.is_superuser or (
+        user.is_active
+        and user.is_staff
+        and user.role == User.Role.ADMIN
+    )
+
+
 class IncidentListCreateView(generics.ListCreateAPIView):
     serializer_class = IncidentSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        user = self.request.user
+        if is_incident_admin(user):
+            return Incident.objects.all().order_by("-created_at")
+
         return Incident.objects.filter(
-            Q(device__owner=self.request.user)
-            | Q(user=self.request.user)
+            Q(device__owner=user)
+            | Q(user=user)
         ).distinct().order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
@@ -167,12 +179,27 @@ class IncidentDetailView(generics.RetrieveUpdateAPIView):
     lookup_field = "id"
 
     def get_queryset(self):
+        user = self.request.user
+        if is_incident_admin(user):
+            return Incident.objects.all()
+
         return Incident.objects.filter(
-            Q(device__owner=self.request.user)
-            | Q(user=self.request.user)
+            Q(device__owner=user)
+            | Q(user=user)
         ).distinct()
 
     def update(self, request, *args, **kwargs):
+        if is_incident_admin(request.user):
+            return Response(
+                {
+                    "detail": (
+                        "Administrators cannot edit survivor incidents "
+                        "through this endpoint."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         protected_fields = {
             "device_identifier": (
                 "The device association cannot be changed "

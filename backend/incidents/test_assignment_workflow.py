@@ -98,6 +98,15 @@ class IncidentAssignmentWorkflowTests(TestCase):
             ),
             {self.owner.id, self.admin.id},
         )
+        self.client.force_authenticate(self.admin)
+        admin_queue = self.client.get(
+            reverse("admin-unassigned-incidents"),
+        )
+        self.assertEqual(admin_queue.status_code, 200)
+        self.assertIn(
+            incident_id,
+            {item["id"] for item in admin_queue.data},
+        )
 
     def test_assignment_marks_authority_busy_and_notifies_recipients(self):
         authority = self._authority("assigned_authority", -1.287, 36.817)

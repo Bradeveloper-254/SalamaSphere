@@ -47,6 +47,53 @@ class IncidentAPITest(TestCase):
 
         self.assertIn(response.status_code, [401, 403])
 
+    def test_admin_can_list_and_retrieve_survivor_incidents(self):
+        survivor = User.objects.create_user(
+            username="admin_visible_survivor",
+            email="admin_visible_survivor@example.com",
+            password="test-password",
+            role=User.Role.SURVIVOR,
+        )
+        incident = Incident.objects.create(
+            user=survivor,
+            source=Incident.IncidentSource.MOBILE,
+            description="Survivor report for admin review",
+            occurred_at=timezone.now(),
+        )
+        admin = User.objects.create_user(
+            username="incident_view_admin",
+            email="incident_view_admin@example.com",
+            password="test-password",
+            role=User.Role.ADMIN,
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=admin)
+
+        list_response = self.client.get(self.endpoint)
+        detail_response = self.client.get(
+            reverse("incident-detail", kwargs={"id": incident.id}),
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIn(
+            str(incident.id),
+            {item["id"] for item in list_response.data},
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["id"], str(incident.id))
+
+        update_response = self.client.patch(
+            reverse("incident-detail", kwargs={"id": incident.id}),
+            {"description": "Changed by administrator"},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 403)
+        incident.refresh_from_db()
+        self.assertEqual(
+            incident.description,
+            "Survivor report for admin review",
+        )
+
     def test_first_submission_creates_incident(self):
         event_id = str(uuid.uuid4())
 
@@ -131,6 +178,10 @@ class IncidentAPITest(TestCase):
                 "threat_level": Incident.ThreatLevel.MEDIUM,
                 "description": "Mobile evidence report",
                 "occurred_at": timezone.now().isoformat(),
+                "latitude": -1.2864,
+                "longitude": 36.8172,
+                "location_accuracy_m": 8.5,
+                "location_source": "mobile_gps",
             },
             format="json",
         )
@@ -139,6 +190,10 @@ class IncidentAPITest(TestCase):
         incident = Incident.objects.get(id=response.data["id"])
         self.assertIsNone(incident.device_id)
         self.assertEqual(incident.user_id, self.user.id)
+        self.assertEqual(float(incident.latitude), -1.2864)
+        self.assertEqual(float(incident.longitude), 36.8172)
+        self.assertEqual(incident.location_accuracy_m, 8.5)
+        self.assertEqual(incident.location_source, "mobile_gps")
 
     def test_repeated_submission_does_not_create_duplicate(self):
         event_id = str(uuid.uuid4())
