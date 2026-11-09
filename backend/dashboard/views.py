@@ -11,6 +11,8 @@ from .models import IncidentAuditEvent, IncidentReviewNote
 from accounts.models import User
 from emergency_notifications.models import EmergencyNotification
 from incidents.models import Incident
+from notifications.services import create_system_notification
+from notifications.services import get_administrators
 
 from .audit import record_incident_audit
 from .models import IncidentAuditEvent
@@ -167,6 +169,17 @@ def create_review_note(request, incident_id):
         review_note.incident = incident
         review_note.author = request.user
         review_note.save()
+
+        for administrator in get_administrators():
+            create_system_notification(
+                recipient=administrator,
+                incident=incident,
+                title="Incident review note added",
+                message=(
+                    f"{request.user.get_username()} added a review note "
+                    f"to incident {str(incident.pk)[:8].upper()}."
+                ),
+            )
 
         record_incident_audit(
             actor=request.user,

@@ -13,6 +13,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from incidents.models import Incident
+from notifications.models import Notification
 
 
 User = get_user_model()
@@ -275,6 +276,33 @@ class IncidentReviewAndAuditModelTests(TestCase):
         self.assertEqual(
             note.note,
             "Test review note.",
+        )
+
+    def test_admin_review_note_notifies_administrators(self):
+        admin = User.objects.create_user(
+            username="review_note_admin",
+            email="review_note_admin@example.test",
+            password="test-password",
+            role=User.Role.ADMIN,
+            is_staff=True,
+        )
+        self.client.force_login(admin)
+
+        response = self.client.post(
+            reverse(
+                "dashboard:create_review_note",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {"note": "The report has been reviewed."},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=admin,
+                incident=self.incident,
+                title="Incident review note added",
+            ).exists()
         )
 
     def test_audit_event_can_be_created(self):
