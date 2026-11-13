@@ -56,8 +56,13 @@ class DashboardOverviewView(APIView):
                 "received_at": incident.received_at,
                 "latitude": incident.latitude,
                 "longitude": incident.longitude,
+                "location_map_url": incident.location_map_url,
                 "location_accuracy_m": incident.location_accuracy_m,
                 "location_source": incident.location_source,
+                "audio_available": any(
+                    item.evidence_type == "audio"
+                    for item in incident.evidence_files.all()
+                ),
                 "evidence": [
                     {
                         "id": str(evidence.id),

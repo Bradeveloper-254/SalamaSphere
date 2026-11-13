@@ -71,6 +71,37 @@ class NotificationWorkflowTests(TestCase):
             ).exists()
         )
 
+    def test_wearable_incident_notifies_admin_with_location(self):
+        self.incident.source = Incident.IncidentSource.WEARABLE
+        self.incident.is_sos = False
+        self.incident.latitude = -1.286389
+        self.incident.longitude = 36.817223
+        self.incident.save(
+            update_fields=[
+                "source",
+                "is_sos",
+                "latitude",
+                "longitude",
+            ]
+        )
+
+        notify_new_incident(self.incident)
+
+        notification = Notification.objects.get(
+            recipient=self.admin,
+            incident=self.incident,
+            title="New wearable SOS incident",
+        )
+        self.assertIn("awaiting assignment", notification.message)
+        self.assertIn(
+            self.incident.location_map_url,
+            notification.message,
+        )
+        self.assertIn(
+            "Recorded audio will be available after wearable upload completes.",
+            notification.message,
+        )
+
     def test_assignment_and_resolution_notify_involved_users_and_admin(self):
         notify_case_assigned(self.assignment)
         self.assertTrue(

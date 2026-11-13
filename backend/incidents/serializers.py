@@ -1,5 +1,6 @@
 import math
 import uuid
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from rest_framework import serializers
 
@@ -9,7 +10,37 @@ from django.contrib.auth import get_user_model
 
 from .models import Incident, IncidentAssignment
 
+
+class CoordinateField(serializers.DecimalField):
+    def to_internal_value(self, data):
+        try:
+            value = Decimal(str(data))
+            if value.is_finite() and value.as_tuple().exponent < -self.decimal_places:
+                value = value.quantize(
+                    Decimal("1").scaleb(-self.decimal_places),
+                    rounding=ROUND_HALF_UP,
+                )
+                data = value
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+        return super().to_internal_value(data)
+
+
 class IncidentSerializer(serializers.ModelSerializer):
+    latitude = CoordinateField(
+        max_digits=9,
+        decimal_places=6,
+        required=False,
+        allow_null=True,
+    )
+    longitude = CoordinateField(
+        max_digits=9,
+        decimal_places=6,
+        required=False,
+        allow_null=True,
+    )
+    location_map_url = serializers.SerializerMethodField()
+    audio_available = serializers.SerializerMethodField()
     device_identifier = serializers.CharField(
         write_only=True,
         required=False,
@@ -42,6 +73,8 @@ class IncidentSerializer(serializers.ModelSerializer):
             "received_at",
             "latitude",
             "longitude",
+            "location_map_url",
+            "audio_available",
             "location_accuracy_m",
             "location_source",
             "status",
@@ -57,6 +90,7 @@ class IncidentSerializer(serializers.ModelSerializer):
             "sync_received_at",
             "created_at",
             "updated_at",
+            "location_map_url",
         ]
 
     def validate_device_identifier(self, value):
@@ -174,11 +208,24 @@ class IncidentSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def get_location_map_url(self, incident):
+        return incident.location_map_url
+
+    def get_audio_available(self, incident):
+        return any(
+            evidence.evidence_type == "audio"
+            for evidence in incident.evidence_files.all()
+        )
+
+
 class AuthorityIncidentSerializer(serializers.ModelSerializer):
     """
     Read-only incident representation for approved authorities
     with an active assignment.
     """
+
+    location_map_url = serializers.SerializerMethodField()
+    audio_available = serializers.SerializerMethodField()
 
     class Meta:
         model = Incident
@@ -193,10 +240,21 @@ class AuthorityIncidentSerializer(serializers.ModelSerializer):
             "is_sos",
             "latitude",
             "longitude",
+            "location_map_url",
+            "audio_available",
             "location_accuracy_m",
             "location_source",
         ]
         read_only_fields = fields
+
+    def get_location_map_url(self, incident):
+        return incident.location_map_url
+
+    def get_audio_available(self, incident):
+        return any(
+            evidence.evidence_type == "audio"
+            for evidence in incident.evidence_files.all()
+        )
 
 
 class IncidentAssignmentCreateSerializer(serializers.Serializer):

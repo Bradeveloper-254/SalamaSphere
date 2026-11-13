@@ -1,4 +1,5 @@
 import hashlib
+import html
 import hmac
 import io
 import logging
@@ -7,10 +8,13 @@ from pathlib import Path
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.core import signing
 from django.db import transaction
 from django.db.models import Q
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse, HttpResponseNotFound
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.text import get_valid_filename
 
 from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
@@ -24,6 +28,15 @@ from rest_framework.views import APIView
 
 from incidents.models import Incident
 from notifications.services import create_system_notification
+from trusted_contacts.models import TrustedContact
+
+from emergency_notifications.message_builder import (
+    ACCESS_LINK_MAX_AGE_SECONDS,
+    ACCESS_LINK_SALT,
+)
+from emergency_notifications.services import (
+    process_pending_emergency_notifications,
+)
 
 from .crypto import decrypt_evidence, encrypt_evidence
 from .models import Evidence
@@ -218,6 +231,19 @@ class EvidenceUploadView(APIView):
             ),
         )
 
+        if (
+            evidence.evidence_type == Evidence.EvidenceType.AUDIO
+            and incident.emergency_notifications.filter(
+                status="pending",
+                channel="sms",
+            ).exists()
+        ):
+            transaction.on_commit(
+                lambda incident_id=incident.pk: (
+                    process_pending_emergency_notifications(incident_id)
+                )
+            )
+
         return Response(
             {
                 "message": "Evidence uploaded successfully.",
@@ -241,7 +267,34 @@ class EvidenceAudioView(EvidenceUploadView):
     """Upload or stream the WAV evidence attached to an incident."""
 
     def _get_incident(self, request, incident_id):
-        return self.get_incident(request, incident_id)
+        user = request.user
+        incident = Incident.objects.filter(pk=incident_id).first()
+        if incident is None:
+            return None
+
+        owns_incident = (
+            incident.user_id == user.pk
+            or incident.device is not None
+            and incident.device.owner_id == user.pk
+        )
+        is_admin = user.is_active and (
+            user.is_superuser
+            or user.is_staff and getattr(user, "role", None) == "admin"
+        )
+        is_assigned_authority = (
+            user.is_active
+            and getattr(user, "role", None) == "authority"
+            and getattr(user, "authority_status", None) == "approved"
+            and incident.authority_assignments.filter(
+                authority=user,
+                is_active=True,
+            ).exists()
+        )
+        return (
+            incident
+            if owns_incident or is_admin or is_assigned_authority
+            else None
+        )
 
     def get(self, request, incident_id):
         incident = self._get_incident(request, incident_id)
@@ -313,6 +366,147 @@ class EvidenceAudioView(EvidenceUploadView):
         response["X-Evidence-Id"] = str(evidence.id)
         response["X-Evidence-SHA256"] = evidence.sha256_hash
         return response
+
+
+class EmergencyIncidentLinkView(APIView):
+    """Time-limited, recipient-specific audio and location link from an SOS SMS."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def _get_access(self, token):
+        try:
+            payload = signing.loads(
+                token,
+                salt=ACCESS_LINK_SALT,
+                max_age=ACCESS_LINK_MAX_AGE_SECONDS,
+            )
+        except signing.BadSignature:
+            return None
+
+        incident = Incident.objects.filter(
+            pk=payload.get("incident_id"),
+        ).select_related("user").first()
+        if incident is None:
+            return None
+        contact = TrustedContact.objects.filter(
+            pk=payload.get("contact_id"),
+            user_id=incident.user_id,
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        ).first()
+        if contact is None:
+            return None
+        evidence = Evidence.objects.filter(
+            incident=incident,
+            evidence_type=Evidence.EvidenceType.AUDIO,
+        ).order_by("-uploaded_at").first()
+        if evidence is None:
+            return None
+        return incident, evidence
+
+    def get(self, request, token):
+        access = self._get_access(token)
+        if access is None:
+            return HttpResponseNotFound(
+                "This private incident link is invalid or has expired."
+            )
+        incident, evidence = access
+        audio_url = reverse(
+            "emergency-incident-audio",
+            kwargs={"token": token},
+        )
+        map_link = incident.location_map_url
+        location_html = (
+            f'<a href="{html.escape(map_link, quote=True)}" '
+            'rel="noopener noreferrer">Open incident location in Google Maps</a>'
+            if map_link
+            else "Location is unavailable."
+        )
+        username = html.escape(incident.user.username)
+        filename = html.escape(evidence.original_filename)
+        mime_type = html.escape(evidence.mime_type or "audio/wav", quote=True)
+        page = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SalamaSphere emergency incident</title>
+</head>
+<body>
+<main>
+<h1>SalamaSphere emergency incident</h1>
+<p>{username} may be in danger or under threat. Please help them as soon as possible.</p>
+<p>{location_html}</p>
+<h2>Recorded audio</h2>
+<audio controls preload="none"><source src="{html.escape(audio_url, quote=True)}" type="{mime_type}"></audio>
+<p><a href="{html.escape(audio_url, quote=True)}?download=1" download="{filename}">Download recorded audio</a></p>
+<p>This private link expires in 7 days.</p>
+</main>
+</body>
+</html>"""
+        response = HttpResponse(page, content_type="text/html; charset=utf-8")
+        response["Cache-Control"] = "private, no-store"
+        response["Referrer-Policy"] = "no-referrer"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Security-Policy"] = (
+            "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
+        return response
+
+    def audio(self, request, token):
+        access = self._get_access(token)
+        if access is None:
+            return HttpResponseNotFound(
+                "This private incident link is invalid or has expired."
+            )
+        incident, evidence = access
+        try:
+            plaintext, current_hash = load_evidence(evidence)
+        except FileNotFoundError:
+            return HttpResponseNotFound("The recorded audio is unavailable.")
+        except EvidenceIntegrityError:
+            mark_evidence_verified(evidence, matches=False)
+            return HttpResponse(
+                "Audio integrity verification failed.",
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not hmac.compare_digest(evidence.sha256_hash, current_hash):
+            mark_evidence_verified(evidence, matches=False)
+            return HttpResponse(
+                "Audio integrity verification failed.",
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        mark_evidence_verified(evidence, matches=True)
+        filename = get_valid_filename(evidence.original_filename)
+        disposition = (
+            "attachment"
+            if request.GET.get("download") == "1"
+            else "inline"
+        )
+        response = FileResponse(
+            io.BytesIO(plaintext),
+            content_type=evidence.mime_type or "audio/wav",
+        )
+        response["Content-Length"] = str(evidence.file_size_bytes)
+        response["Content-Disposition"] = (
+            f'{disposition}; filename="{filename}"'
+        )
+        response["Cache-Control"] = "private, no-store"
+        response["Referrer-Policy"] = "no-referrer"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["X-Evidence-SHA256"] = evidence.sha256_hash
+        return response
+
+
+class EmergencyIncidentAudioLinkView(EmergencyIncidentLinkView):
+    def get(self, request, token):
+        return self.audio(request, token)
 
 
 class EvidenceVerificationView(APIView):

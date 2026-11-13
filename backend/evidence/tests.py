@@ -12,8 +12,13 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
+from accounts.models import User
+from emergency_notifications.message_builder import build_emergency_access_url
+from emergency_notifications.models import EmergencyNotification
 from incidents.models import Incident
+from incidents.models import IncidentAssignment
 from dashboard.models import IncidentAuditEvent
 from trusted_contacts.models import TrustedContact
 
@@ -243,5 +248,179 @@ class IncidentEvidenceApiTests(TestCase):
         self.client.force_authenticate(user=self.other_user)
 
         response = self.client.get(self.upload_url)
+
+        self.assertEqual(response.status_code, 404)
+        audio_response = self.client.get(
+            reverse(
+                "incident-audio",
+                kwargs={"incident_id": self.incident.id},
+            )
+        )
+        self.assertEqual(audio_response.status_code, 404)
+
+    def test_admin_and_assigned_authority_can_play_uploaded_incident_audio(self):
+        upload = self.client.post(
+            reverse(
+                "incident-audio",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {
+                "file": SimpleUploadedFile(
+                    "incident.wav",
+                    b"audio-data",
+                    content_type="audio/wav",
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201, upload.data)
+
+        admin = User.objects.create_user(
+            username="evidence_admin",
+            email="evidence_admin@example.test",
+            role=User.Role.ADMIN,
+            is_staff=True,
+        )
+        authority = User.objects.create_user(
+            username="evidence_authority",
+            email="evidence_authority@example.test",
+            role=User.Role.AUTHORITY,
+            authority_status=User.AuthorityStatus.APPROVED,
+        )
+        IncidentAssignment.objects.create(
+            incident=self.incident,
+            authority=authority,
+            assigned_by=admin,
+        )
+        audio_url = reverse(
+            "incident-audio",
+            kwargs={"incident_id": self.incident.id},
+        )
+
+        for user in (admin, authority):
+            with self.subTest(role=user.role):
+                self.client.force_authenticate(user=user)
+                response = self.client.get(audio_url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    b"".join(response.streaming_content),
+                    b"audio-data",
+                )
+
+    @patch("evidence.views.process_pending_emergency_notifications")
+    def test_audio_upload_automatically_triggers_pending_contact_sms(
+        self,
+        process_notifications,
+    ):
+        self.incident.source = Incident.IncidentSource.WEARABLE
+        self.incident.is_sos = False
+        self.incident.save(update_fields=["source", "is_sos"])
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Trusted friend",
+            phone_number="+254733333333",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+            consent_confirmed_at=timezone.now(),
+        )
+        EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=contact,
+            channel="sms",
+            status=EmergencyNotification.Status.PENDING,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                reverse(
+                    "incident-audio",
+                    kwargs={"incident_id": self.incident.id},
+                ),
+                {
+                    "file": SimpleUploadedFile(
+                        "incident.wav",
+                        b"audio-data",
+                        content_type="audio/wav",
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        process_notifications.assert_called_once_with(self.incident.id)
+
+    @override_settings(
+        SALAMASPHERE_PUBLIC_BASE_URL="https://api.salama.example",
+    )
+    def test_trusted_contact_link_opens_location_and_streams_audio(self):
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Trusted friend",
+            phone_number="+254711111111",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+            consent_confirmed_at=timezone.now(),
+        )
+        self.incident.latitude = -1.286389
+        self.incident.longitude = 36.817223
+        self.incident.save(update_fields=["latitude", "longitude"])
+        upload = self.client.post(
+            reverse(
+                "incident-audio",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {
+                "file": SimpleUploadedFile(
+                    "incident.wav",
+                    b"audio-data",
+                    content_type="audio/wav",
+                ),
+            },
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201, upload.data)
+
+        link = build_emergency_access_url(self.incident, contact)
+        token = link.rstrip("/").rsplit("/", 1)[-1]
+        self.client.force_authenticate(user=None)
+        page = self.client.get(
+            reverse("emergency-incident-link", kwargs={"token": token}),
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"evidence_owner may be in danger", page.content)
+        self.assertIn(b"Open incident location in Google Maps", page.content)
+        self.assertIn(b"Download recorded audio", page.content)
+        self.assertEqual(page["Cache-Control"], "private, no-store")
+
+        audio = self.client.get(
+            reverse("emergency-incident-audio", kwargs={"token": token}),
+        )
+        self.assertEqual(audio.status_code, 200)
+        self.assertEqual(b"".join(audio.streaming_content), b"audio-data")
+
+    @override_settings(
+        SALAMASPHERE_PUBLIC_BASE_URL="https://api.salama.example",
+    )
+    def test_emergency_link_rejects_disabled_contact(self):
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Trusted friend",
+            phone_number="+254722222222",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+            consent_confirmed_at=timezone.now(),
+        )
+        link = build_emergency_access_url(self.incident, contact)
+        token = link.rstrip("/").rsplit("/", 1)[-1]
+        contact.is_active = False
+        contact.save(update_fields=["is_active"])
+
+        self.client.force_authenticate(user=None)
+        response = self.client.get(
+            reverse("emergency-incident-link", kwargs={"token": token}),
+        )
 
         self.assertEqual(response.status_code, 404)

@@ -201,6 +201,19 @@ EMAIL_BACKEND = (
 )
 DEFAULT_FROM_EMAIL = "noreply@salamasphere.local"
 
+SALAMASPHERE_PUBLIC_BASE_URL = env(
+    "SALAMASPHERE_PUBLIC_BASE_URL",
+    default="",
+)
+TWILIO_ACCOUNT_SID = env("TWILIO_ACCOUNT_SID", default="")
+TWILIO_AUTH_TOKEN = env("TWILIO_AUTH_TOKEN", default="")
+TWILIO_MESSAGING_SERVICE_SID = env(
+    "TWILIO_MESSAGING_SERVICE_SID",
+    default="",
+)
+TWILIO_FROM_NUMBER = env("TWILIO_FROM_NUMBER", default="")
+SMS_PROVIDER = env("SMS_PROVIDER", default="mobile_sasa").lower()
+
 # Production security configuration
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -217,4 +230,21 @@ if not DEBUG:
 CSRF_TRUSTED_ORIGINS = env.list(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
     default=[],
+)
+
+ESMS_API_KEY = env("ESMS_API_KEY", default="")
+ESMS_BASE_URL = env(
+    "ESMS_BASE_URL",
+    default="https://sms.esmsafrica.io",
+)
+ESMS_SENDER_ID = env("ESMS_SENDER_ID", default="")
+
+MOBILESASA_TOKEN = env("MOBILESASA_TOKEN", default="")
+MOBILESASA_BASE_URL = env(
+    "MOBILESASA_BASE_URL",
+    default="https://api.mobilesasa.com",
+)
+MOBILESASA_SENDER_ID = env(
+    "MOBILESASA_SENDER_ID",
+    default="MOBILESASA",
 )

@@ -1,7 +1,8 @@
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -11,6 +12,7 @@ from accounts.models import User
 from devices.models import WearableDevice
 from dashboard.models import IncidentAuditEvent
 from emergency_notifications.models import EmergencyNotification
+from emergency_notifications.providers import SMSResult
 from notifications.models import Notification
 from threat_analysis.models import ThreatAssessment
 from trusted_contacts.models import TrustedContact
@@ -178,8 +180,8 @@ class IncidentAPITest(TestCase):
                 "threat_level": Incident.ThreatLevel.MEDIUM,
                 "description": "Mobile evidence report",
                 "occurred_at": timezone.now().isoformat(),
-                "latitude": -1.2864,
-                "longitude": 36.8172,
+                "latitude": -1.2864123456789,
+                "longitude": 36.8172123456789,
                 "location_accuracy_m": 8.5,
                 "location_source": "mobile_gps",
             },
@@ -190,10 +192,36 @@ class IncidentAPITest(TestCase):
         incident = Incident.objects.get(id=response.data["id"])
         self.assertIsNone(incident.device_id)
         self.assertEqual(incident.user_id, self.user.id)
-        self.assertEqual(float(incident.latitude), -1.2864)
-        self.assertEqual(float(incident.longitude), 36.8172)
+        self.assertEqual(str(incident.latitude), "-1.286412")
+        self.assertEqual(str(incident.longitude), "36.817212")
+        self.assertEqual(
+            response.data["location_map_url"],
+            "https://www.google.com/maps/search/?api=1&query="
+            "-1.286412,36.817212",
+        )
         self.assertEqual(incident.location_accuracy_m, 8.5)
         self.assertEqual(incident.location_source, "mobile_gps")
+
+    def test_wearable_incident_rounds_coordinates_and_returns_map_link(self):
+        response = self.client.post(
+            self.endpoint,
+            {
+                **self.build_payload(str(uuid.uuid4())),
+                "latitude": -1.2864123456789,
+                "longitude": 36.8172123456789,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        incident = Incident.objects.get(id=response.data["id"])
+        self.assertEqual(str(incident.latitude), "-1.286412")
+        self.assertEqual(str(incident.longitude), "36.817212")
+        self.assertEqual(
+            response.data["location_map_url"],
+            "https://www.google.com/maps/search/?api=1&query="
+            "-1.286412,36.817212",
+        )
 
     def test_repeated_submission_does_not_create_duplicate(self):
         event_id = str(uuid.uuid4())
@@ -299,6 +327,56 @@ class IncidentAPITest(TestCase):
                 status=EmergencyNotification.Status.PENDING,
             ).count(),
             1,
+        )
+
+    @override_settings(SMS_PROVIDER="mobile_sasa")
+    @patch("emergency_notifications.providers.MobileSasaProvider.send_sms")
+    def test_wearable_sos_sends_sms_after_successful_creation(
+        self,
+        send_sms,
+    ):
+        TrustedContact.objects.create(
+            user=self.user,
+            name="Trusted contact",
+            phone_number="+254700000000",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        )
+        send_sms.return_value = SMSResult(
+            accepted=True,
+            provider_message_id="MS123",
+            provider_status="0200",
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                self.endpoint,
+                {
+                    **self.build_payload(str(uuid.uuid4())),
+                    "is_sos": True,
+                    "latitude": -1.286389,
+                    "longitude": 36.817223,
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201, msg=str(response.data))
+        send_sms.assert_called_once()
+        phone_number, message = send_sms.call_args.args
+        self.assertEqual(phone_number, "+254700000000")
+        self.assertIn("SALAMASPHERE EMERGENCY ALERT", message)
+        self.assertIn(
+            "https://www.google.com/maps/search/?api=1&query="
+            "-1.286389,36.817223",
+            message,
+        )
+        notification = EmergencyNotification.objects.get(
+            incident_id=response.data["id"],
+        )
+        self.assertEqual(
+            notification.status,
+            EmergencyNotification.Status.ACCEPTED,
         )
 
     def test_mobile_sos_without_wearable_queues_alerts(self):

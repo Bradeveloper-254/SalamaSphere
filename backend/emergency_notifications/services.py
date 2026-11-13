@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -5,22 +7,25 @@ from incidents.models import Incident
 from trusted_contacts.models import TrustedContact
 
 from .models import EmergencyNotification
-from .providers import ConsoleSMSProvider
+from .providers import get_sms_provider
 from .message_builder import build_emergency_message
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
 def queue_emergency_notifications(incident):
     """
-    Queue notifications for an explicitly identified SOS incident.
-
-    This function does not send messages.
+    Queue notifications for SOS and wearable incidents.
     """
 
     if not isinstance(incident, Incident):
         raise TypeError("A valid Incident instance is required.")
 
-    if not incident.is_sos:
+    if (
+        not incident.is_sos
+        and incident.source != Incident.IncidentSource.WEARABLE
+    ):
         return []
 
     contacts = TrustedContact.objects.filter(
@@ -51,15 +56,7 @@ def queue_emergency_notifications(incident):
 
 
 def process_emergency_notification(notification_id, provider=None):
-    """
-    Process one pending notification using a simulated provider
-    unless another provider is explicitly supplied.
-
-    This is a development implementation, not a production
-    background-worker or delivery-confirmation system.
-    """
-
-    provider = provider or ConsoleSMSProvider()
+    """Send one queued SOS message through the configured or injected provider."""
 
     with transaction.atomic():
         notification = (
@@ -72,9 +69,13 @@ def process_emergency_notification(notification_id, provider=None):
         if notification.status != EmergencyNotification.Status.PENDING:
             return notification
 
-        if not notification.incident.is_sos:
+        if (
+            not notification.incident.is_sos
+            and notification.incident.source
+            != Incident.IncidentSource.WEARABLE
+        ):
             notification.status = EmergencyNotification.Status.FAILED
-            notification.last_error = "Incident is not an SOS event."
+            notification.last_error = "Incident is not an eligible SOS event."
             notification.save(
                 update_fields=[
                     "status",
@@ -129,17 +130,32 @@ def process_emergency_notification(notification_id, provider=None):
         .get(pk=notification_id)
     )
 
-    message = build_emergency_message(notification.incident)
-
     try:
+        provider = provider or get_sms_provider()
+        message = build_emergency_message(notification.incident)
         result = provider.send_sms(
             notification.recipient.phone_number,
             message,
         )
+    except ValueError as error:
+        EmergencyNotification.objects.filter(
+            pk=notification_id,
+            status=EmergencyNotification.Status.PROCESSING,
+        ).update(
+            status=EmergencyNotification.Status.FAILED,
+            provider_status="not_configured",
+            last_error=str(error)[:500],
+            updated_at=timezone.now(),
+        )
+        return EmergencyNotification.objects.get(pk=notification_id)
     except Exception:
         # A timeout may mean a provider accepted the message but
         # the response was lost. Do not automatically retry an
         # ambiguous outcome without provider idempotency support.
+        logger.exception(
+            "SMS provider outcome is unknown for notification %s",
+            notification_id,
+        )
         EmergencyNotification.objects.filter(
             pk=notification_id,
             status=EmergencyNotification.Status.PROCESSING,
@@ -181,3 +197,18 @@ def process_emergency_notification(notification_id, provider=None):
         )
 
     return notification
+
+
+def process_pending_emergency_notifications(incident_id):
+    """Send all pending SMS alerts for an incident."""
+    pending_ids = list(
+        EmergencyNotification.objects.filter(
+            incident_id=incident_id,
+            status=EmergencyNotification.Status.PENDING,
+            channel="sms",
+        ).values_list("pk", flat=True)
+    )
+    return [
+        process_emergency_notification(notification_id)
+        for notification_id in pending_ids
+    ]

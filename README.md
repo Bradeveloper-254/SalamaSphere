@@ -79,6 +79,31 @@ and notification permissions must be carefully designed.
 The prototype must not be considered a guaranteed
 emergency-response service.
 
+## Automatic wearable incident SMS
+
+Wearable incidents are sent to the admin assignment queue and create SMS
+notifications for the user's active trusted contacts who have consented to
+SOS alerts. Once the incident is successfully committed, pending SMS alerts
+are sent to those contacts. The alert includes the user's name, incident
+time, and a Google Maps link when GPS coordinates are available.
+
+Mobile Sasa is the default SMS provider. Configure these backend environment
+variables before deployment:
+
+- `SMS_PROVIDER=mobile_sasa`
+- `MOBILESASA_TOKEN`: Mobile Sasa API token.
+- `MOBILESASA_SENDER_ID`: sender ID registered with Mobile Sasa.
+- `MOBILESASA_BASE_URL`: Mobile Sasa API origin; defaults to
+  `https://api.mobilesasa.com`.
+
+Keep the provider token in the deployment secret store, not source control.
+Set `SMS_PROVIDER=console` to simulate SMS locally, or select `twilio` or
+`esms_africa` to use an alternate configured provider. An accepted response
+confirms submission to the provider, not delivery to the handset. To process
+one existing pending alert explicitly, run
+`python manage.py process --notification-id <notification-uuid>` from the
+backend directory.
+
 ## Documentation
 
 See the docs/ directory for requirements, architecture,

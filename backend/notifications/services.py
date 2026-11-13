@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils import timezone
 
+from incidents.models import Incident
 from .models import Notification
 
 
@@ -95,6 +96,22 @@ def create_incident_notification(
 
 
 def notify_new_incident(incident):
+    is_wearable = incident.source == Incident.IncidentSource.WEARABLE
+    is_urgent = incident.is_sos or is_wearable
+    location = incident.location_map_url
+    admin_message = (
+        f"A {incident.threat_level} priority "
+        f"{'wearable SOS' if is_wearable else 'incident'} was submitted "
+        "and is awaiting assignment."
+    )
+    if location:
+        admin_message = f"{admin_message}\nLocation: {location}"
+    if is_wearable:
+        admin_message = (
+            f"{admin_message}\nRecorded audio will be available "
+            "after wearable upload completes."
+        )
+
     create_incident_notification(
         recipient=incident.user,
         incident=incident,
@@ -102,7 +119,7 @@ def notify_new_incident(incident):
         message="Your incident was received and is awaiting review.",
         notification_type=(
             Notification.NotificationType.SOS
-            if incident.is_sos
+            if is_urgent
             else Notification.NotificationType.INCIDENT
         ),
     )
@@ -110,13 +127,14 @@ def notify_new_incident(incident):
         create_incident_notification(
             recipient=administrator,
             incident=incident,
-            title="New incident uploaded",
-            message=(
-                f"A {incident.threat_level} priority incident was submitted "
-                "and is awaiting assignment."
+            title=(
+                "New wearable SOS incident"
+                if is_wearable
+                else "New incident uploaded"
             ),
+            message=admin_message,
             notification_type=Notification.NotificationType.SOS
-            if incident.is_sos
+            if is_urgent
             else Notification.NotificationType.INCIDENT,
         )
     authorities = User.objects.filter(
@@ -130,12 +148,13 @@ def notify_new_incident(incident):
             incident=incident,
             title="New incident submitted",
             message=(
-                f"A {incident.threat_level} priority incident was submitted. "
+                f"A {incident.threat_level} priority "
+                f"{'wearable SOS' if is_wearable else 'incident'} was submitted. "
                 "Review available cases and prepare for possible assignment."
             ),
             notification_type=(
                 Notification.NotificationType.SOS
-                if incident.is_sos
+                if is_urgent
                 else Notification.NotificationType.INCIDENT
             ),
         )

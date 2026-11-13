@@ -53,6 +53,8 @@ const nav = document.querySelector('#navigation');
 const screen = document.querySelector('#screen');
 const notice = document.querySelector('#notice');
 const notificationToggle = document.querySelector('#notification-toggle');
+let activeIncidentAudio = null;
+let activeIncidentAudioUrl = null;
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -101,6 +103,28 @@ function listFrom(payload) {
   return Array.isArray(payload) ? payload : payload.results || [];
 }
 
+function googleMapsUrl(latitude, longitude) {
+  if (latitude == null || longitude == null
+      || String(latitude).trim() === '' || String(longitude).trim() === '') {
+    return null;
+  }
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90
+      || !Number.isFinite(lon) || lon < -180 || lon > 180) {
+    return null;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lon}`)}`;
+}
+
+function locationStatusMarkup(location) {
+  const mapUrl = googleMapsUrl(location.latitude, location.longitude);
+  const mapLink = mapUrl
+    ? ` <a href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>`
+    : '';
+  return `Location captured (accuracy +/- ${Math.round(location.accuracy)} m).${mapLink}`;
+}
+
 function incidentRows() {
   const incidents = state.data.incidents || [];
   if (!incidents.length) {
@@ -109,16 +133,20 @@ function incidentRows() {
 
   return `<div class="table-wrap"><table><thead><tr>
     <th>Incident</th><th>Priority</th><th>Status</th><th>Source</th>
-    <th>Location</th><th>Received</th>
+    <th>Location</th><th>Audio</th><th>Received</th>
   </tr></thead><tbody>${incidents.map((incident) => {
-    const location = incident.latitude != null && incident.longitude != null
-      ? `${esc(incident.latitude)}, ${esc(incident.longitude)}`
+    const mapUrl = googleMapsUrl(incident.latitude, incident.longitude);
+    const location = mapUrl
+      ? `<a href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>`
       : 'Unavailable';
     return `<tr>
       <td>${esc(String(incident.id).slice(0, 8))}...</td>
       <td><span class="badge ${incident.is_sos ? 'urgent' : esc(incident.threat_level)}">${incident.is_sos ? 'SOS' : esc(incident.threat_level)}</span></td>
       <td><span class="badge ${esc(incident.status)}">${esc(incident.status)}</span></td>
       <td>${esc(incident.source)}</td><td>${location}</td>
+      <td>${incident.audio_available
+    ? `<button class="text-action" data-play-audio="${esc(incident.id)}">Play recorded audio</button>`
+    : 'Not uploaded yet'}</td>
       <td>${incident.received_at ? new Date(incident.received_at).toLocaleString() : '-'}</td>
     </tr>`;
   }).join('')}</tbody></table></div>`;
@@ -177,11 +205,11 @@ function renderContacts() {
 
 function renderIncidentForm() {
   const locationText = state.location
-    ? `Location captured (accuracy +/- ${Math.round(state.location.accuracy)} m).`
+    ? locationStatusMarkup(state.location)
     : state.locationError || 'Requesting location permission...';
   return `<div class="panel form-panel">
     <div class="section-head"><h2>Report an incident</h2><button class="action secondary" id="retry-location" type="button">Get my location</button></div>
-    <p class="muted" id="location-status">${esc(locationText)}</p>
+    <p class="muted" id="location-status">${state.location ? locationText : esc(locationText)}</p>
     <form id="incident-form" class="form-grid">
       <label>What happened?<textarea name="description" rows="4" maxlength="5000" required></textarea></label>
       <label>Threat level<select name="threat_level"><option value="medium">Medium</option><option value="high">High</option><option value="low">Low</option></select></label>
@@ -200,9 +228,12 @@ function renderAssignments() {
       <article class="assignment-item">
         <div><strong>${incident.is_sos ? 'SOS' : esc(incident.threat_level)} incident · ${esc(String(incident.id).slice(0, 8))}...</strong>
           <p>${esc(incident.description || 'No description provided.')}</p>
-          <small>${incident.latitude != null && incident.longitude != null
-    ? `Location: ${esc(incident.latitude)}, ${esc(incident.longitude)}`
+          <small>${googleMapsUrl(incident.latitude, incident.longitude)
+    ? `Location: <a href="${esc(googleMapsUrl(incident.latitude, incident.longitude))}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>`
     : 'Location unavailable; distance cannot be calculated.'}</small>
+          <p>${incident.audio_available
+    ? `<button class="text-action" data-play-audio="${esc(incident.id)}">Play recorded audio</button>`
+    : 'Recorded audio is not uploaded yet.'}</p>
         </div>
         <form class="assignment-form" data-incident-id="${esc(incident.id)}">
           ${error ? `<p class="inline-error">${esc(error)}</p>` : ''}
@@ -264,7 +295,42 @@ function renderScreen() {
   }
 
   screen.insertAdjacentHTML('beforeend', renderNotificationPanel());
+  bindIncidentAudioButtons();
   bindNotificationPanel();
+}
+
+function bindIncidentAudioButtons() {
+  screen.querySelectorAll('[data-play-audio]').forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const token = localStorage.getItem('salamaToken');
+        const response = await fetch(
+          `${API}/api/incidents/${encodeURIComponent(button.dataset.playAudio)}/audio/`,
+          { headers: token ? { Authorization: `Token ${token}` } : {} },
+        );
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(detail || `Audio request failed (${response.status}).`);
+        }
+
+        if (activeIncidentAudio) activeIncidentAudio.pause();
+        if (activeIncidentAudioUrl) URL.revokeObjectURL(activeIncidentAudioUrl);
+        activeIncidentAudioUrl = URL.createObjectURL(await response.blob());
+        activeIncidentAudio = new Audio(activeIncidentAudioUrl);
+        activeIncidentAudio.onended = () => {
+          URL.revokeObjectURL(activeIncidentAudioUrl);
+          activeIncidentAudioUrl = null;
+          activeIncidentAudio = null;
+        };
+        await activeIncidentAudio.play();
+      } catch (error) {
+        showNotice(`Could not play incident audio: ${error.message}`);
+      } finally {
+        button.disabled = false;
+      }
+    };
+  });
   updateNotificationBadge();
 }
 
@@ -367,7 +433,7 @@ function requestLocation() {
     state.locationError = '';
     const locationStatus = document.querySelector('#location-status');
     if (locationStatus) {
-      locationStatus.textContent = `Location captured (accuracy +/- ${Math.round(location.accuracy)} m).`;
+      locationStatus.innerHTML = locationStatusMarkup(location);
     }
   }).catch((error) => {
     state.locationError = error.message;
@@ -420,8 +486,8 @@ function bindIncidentForm() {
       is_sos: formData.has('is_sos'),
     };
     if (state.location) {
-      incident.latitude = state.location.latitude;
-      incident.longitude = state.location.longitude;
+      incident.latitude = Number(state.location.latitude.toFixed(6));
+      incident.longitude = Number(state.location.longitude.toFixed(6));
       incident.location_accuracy_m = state.location.accuracy;
       incident.location_source = 'browser_geolocation';
     }

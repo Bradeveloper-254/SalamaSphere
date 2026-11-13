@@ -126,6 +126,15 @@ class Incident(models.Model):
             )
         ]
 
+    @property
+    def location_map_url(self):
+        if self.latitude is None or self.longitude is None:
+            return None
+        return (
+            "https://www.google.com/maps/search/?api=1&query="
+            f"{self.latitude},{self.longitude}"
+        )
+
     def __str__(self):
         return f"{self.id} - {self.threat_level}"
     

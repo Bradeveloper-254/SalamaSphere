@@ -2,6 +2,8 @@
 from django.urls import path
 
 from .views import (
+    EmergencyIncidentAudioLinkView,
+    EmergencyIncidentLinkView,
     EvidenceAudioView,
     EvidenceFileView,
     EvidenceUploadView,
@@ -9,6 +11,16 @@ from .views import (
 )
 
 urlpatterns = [
+    path(
+        "emergency/<str:token>/",
+        EmergencyIncidentLinkView.as_view(),
+        name="emergency-incident-link",
+    ),
+    path(
+        "emergency/<str:token>/audio/",
+        EmergencyIncidentAudioLinkView.as_view(),
+        name="emergency-incident-audio",
+    ),
     path(
         "evidence/<uuid:evidence_id>/file/",
         EvidenceFileView.as_view(),

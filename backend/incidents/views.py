@@ -20,6 +20,7 @@ from devices.models import WearableDevice
 from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
 from emergency_notifications.services import (
+    process_pending_emergency_notifications,
     queue_emergency_notifications,
 )
 from notifications.services import (
@@ -55,11 +56,15 @@ class IncidentListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         user = self.request.user
         if is_incident_admin(user):
-            return Incident.objects.all().order_by("-created_at")
+            return Incident.objects.prefetch_related(
+                "evidence_files",
+            ).all().order_by("-created_at")
 
         return Incident.objects.filter(
             Q(device__owner=user)
             | Q(user=user)
+        ).prefetch_related(
+            "evidence_files",
         ).distinct().order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
@@ -147,7 +152,16 @@ class IncidentListCreateView(generics.ListCreateAPIView):
                     action=IncidentAuditEvent.Action.INCIDENT_CREATED,
                     outcome=IncidentAuditEvent.Outcome.SUCCESS,
                 )
-                queue_emergency_notifications(incident)
+                queued_notifications = queue_emergency_notifications(incident)
+                if queued_notifications:
+                    transaction.on_commit(
+                        lambda incident_id=incident.pk: (
+                            process_pending_emergency_notifications(
+                                incident_id
+                            )
+                        ),
+                        robust=True,
+                    )
                 notify_new_incident(incident)
 
         except IntegrityError:
@@ -250,6 +264,7 @@ class AuthorityAssignedIncidentListView(generics.ListAPIView):
                 authority_assignments__is_active=True,
             )
             .select_related("user", "device")
+            .prefetch_related("evidence_files")
             .distinct()
             .order_by("-received_at")
         )
@@ -353,6 +368,10 @@ class AdminIncidentAssignmentCreateView(APIView):
                 "received_at": incident.received_at,
                 "latitude": incident.latitude,
                 "longitude": incident.longitude,
+                "location_map_url": incident.location_map_url,
+                "audio_available": incident.evidence_files.filter(
+                    evidence_type="audio",
+                ).exists(),
             }
             for incident in incidents
         ])
