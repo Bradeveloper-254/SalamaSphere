@@ -348,12 +348,29 @@ class IncidentAPITest(TestCase):
             provider_message_id="MS123",
             provider_status="0200",
         )
+        device_identifier = "SALAMA-AUTO-CLAIM-001"
+        registration_response = self.client.post(
+            reverse("device-register"),
+            {
+                "device_name": "SalamaSphere wearable",
+                "device_identifier": device_identifier,
+                "firmware_version": "unknown",
+            },
+            format="json",
+        )
+        self.assertEqual(
+            registration_response.status_code,
+            201,
+            msg=str(registration_response.data),
+        )
+        payload = self.build_payload(str(uuid.uuid4()))
+        payload["device_identifier"] = device_identifier
 
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 self.endpoint,
                 {
-                    **self.build_payload(str(uuid.uuid4())),
+                    **payload,
                     "is_sos": True,
                     "latitude": -1.286389,
                     "longitude": 36.817223,
