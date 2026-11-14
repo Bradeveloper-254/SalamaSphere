@@ -255,6 +255,10 @@ AT_VOICE_MODE = env(
     "AT_VOICE_MODE",
     default="mock",
 ).lower()
+AT_VOICE_TEST_ANNOUNCEMENT = env.bool(
+    "AT_VOICE_TEST_ANNOUNCEMENT",
+    default=DEBUG,
+)
 
 AT_VOICE_USERNAME = env(
     "AT_VOICE_USERNAME",

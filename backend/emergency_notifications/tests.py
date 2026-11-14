@@ -544,6 +544,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             1,
         )
 
+    @override_settings(AT_VOICE_TEST_ANNOUNCEMENT=False)
     def test_announcement_avoids_name_and_precise_coordinates(self):
         self.incident.latitude = -1.286389
         self.incident.longitude = 36.817223
@@ -560,6 +561,20 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertNotIn("Amina Wanjiku", announcement)
         self.assertNotIn("-1.286389", announcement)
         self.assertNotIn("36.817223", announcement)
+
+    @override_settings(AT_VOICE_TEST_ANNOUNCEMENT=True)
+    def test_test_announcement_is_explicit_and_does_not_share_incident_details(
+        self,
+    ):
+        announcement = generate_emergency_voice_announcement(self.incident)
+
+        self.assertIn("test automated voice call", announcement)
+        self.assertIn("No emergency has been triggered", announcement)
+        self.assertIn("not a real emergency", announcement)
+        self.assertIn("Bradley Minyata", announcement)
+        self.assertNotIn(self.user.get_full_name(), announcement)
+        self.assertNotIn(str(self.incident.latitude), announcement)
+        self.assertNotIn(str(self.incident.longitude), announcement)
 
     def test_mock_provider_accepts_call_and_records_provider_call_id(self):
         self.contact.receive_voice_calls = True

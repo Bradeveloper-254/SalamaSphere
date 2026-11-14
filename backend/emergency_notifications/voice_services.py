@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -19,6 +20,20 @@ def generate_emergency_voice_announcement(incident, contact=None):
     """Build the spoken emergency announcement for an incident."""
     if not isinstance(incident, Incident):
         raise TypeError("A valid Incident instance is required.")
+
+    if settings.AT_VOICE_TEST_ANNOUNCEMENT:
+        return (
+            "Hello. This is a test automated voice call from SalamaSphere. "
+            "The developer DevNUX's Solutions, Junior Developer Bradley "
+            "Minyata, is currently testing the automated emergency "
+            "notification system to see if it is working and can help real "
+            "users. No emergency has been triggered. This is not a real "
+            "emergency. Thank you very much for accepting the call. Kindly "
+            "let him know that his voice-call emergency notification system "
+            "is working and that he can now move on to other tasks. Please "
+            "check your SMS for the location where the SOS event was created. "
+            "Thank you for your time."
+        )
 
     announcement = (
         "This is an automated SalamaSphere emergency alert. "
