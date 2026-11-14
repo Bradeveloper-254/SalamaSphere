@@ -7,33 +7,35 @@ from incidents.models import Incident
 from trusted_contacts.models import TrustedContact
 
 from .models import EmergencyNotification
-from .voice_provider import get_voice_provider
+from .voice_provider import (
+    VoiceProviderConfigurationError,
+    get_voice_provider,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def generate_emergency_voice_announcement(incident):
+def generate_emergency_voice_announcement(incident, contact=None):
     """Build the spoken emergency announcement for an incident."""
     if not isinstance(incident, Incident):
         raise TypeError("A valid Incident instance is required.")
 
-    name = incident.user.get_full_name().strip() or incident.user.username
-    timestamp = incident.occurred_at.strftime("%d %B %Y at %H:%M UTC")
-    if incident.latitude is not None and incident.longitude is not None:
-        location = (
-            f"latitude {incident.latitude}, "
-            f"longitude {incident.longitude}"
-        )
-    else:
-        location = "unavailable"
-
-    return (
+    announcement = (
         "This is an automated SalamaSphere emergency alert. "
-        f"{name} has triggered an SOS. "
-        f"The incident was reported on {timestamp}. "
-        f"The reported location is {location}. "
-        "Please contact them and provide assistance."
+        "A person who listed you as a trusted contact needs help. "
+        "Please contact them as soon as possible."
     )
+    if (
+        incident.location_map_url
+        and contact is not None
+        and contact.is_active
+        and contact.receive_sos_alerts
+        and contact.consent_confirmed
+    ):
+        announcement += (
+            " If you receive the consented SMS alert, it includes a map link."
+        )
+    return announcement
 
 
 @transaction.atomic
@@ -138,14 +140,15 @@ def process_voice_notification(notification_id, provider=None):
     try:
         provider = provider or get_voice_provider()
         announcement = generate_emergency_voice_announcement(
-            notification.incident
+            notification.incident,
+            notification.recipient,
         )
         result = provider.initiate_call(
             notification.recipient.phone_number,
             announcement,
             str(notification.pk),
         )
-    except (ValueError, NotImplementedError) as error:
+    except VoiceProviderConfigurationError as error:
         EmergencyNotification.objects.filter(
             pk=claimed_id,
             status=EmergencyNotification.Status.PROCESSING,
@@ -173,19 +176,24 @@ def process_voice_notification(notification_id, provider=None):
         return EmergencyNotification.objects.get(pk=claimed_id)
 
     with transaction.atomic():
-        notification = EmergencyNotification.objects.get(pk=claimed_id)
-        if result.accepted:
-            notification.status = EmergencyNotification.Status.ACCEPTED
-            # The existing provider ID column is shared by SMS and voice.
+        notification = EmergencyNotification.objects.select_for_update().get(
+            pk=claimed_id
+        )
+        if result.provider_call_id:
             notification.provider_message_id = result.provider_call_id
+        if notification.status in {
+            EmergencyNotification.Status.PROCESSING,
+            EmergencyNotification.Status.UNKNOWN,
+        }:
             notification.provider_status = result.provider_status
-            notification.last_error = ""
-        else:
-            notification.status = EmergencyNotification.Status.FAILED
-            notification.provider_status = result.provider_status
-            notification.last_error = (
-                result.error or "Provider rejected the call."
-            )[:500]
+            if result.accepted:
+                notification.status = EmergencyNotification.Status.ACCEPTED
+                notification.last_error = ""
+            else:
+                notification.status = EmergencyNotification.Status.FAILED
+                notification.last_error = (
+                    result.error or "Provider rejected the call."
+                )[:500]
         notification.save(
             update_fields=[
                 "status",
@@ -197,6 +205,87 @@ def process_voice_notification(notification_id, provider=None):
         )
 
     return notification
+
+
+def update_voice_call_from_callback(session_id, event_status):
+    """Apply a verified provider status callback to its voice notification."""
+    status_text = (
+        str(event_status or "")
+        .strip()
+        .lower()
+        .replace("_", " ")
+        .replace("-", " ")
+    )
+    status_text = " ".join(status_text.split())
+    status_map = {
+        "queued": EmergencyNotification.Status.ACCEPTED,
+        "accepted": EmergencyNotification.Status.ACCEPTED,
+        "ringing": EmergencyNotification.Status.RINGING,
+        "answered": EmergencyNotification.Status.ANSWERED,
+        "active": EmergencyNotification.Status.ANSWERED,
+        "in progress": EmergencyNotification.Status.ANSWERED,
+        "completed": EmergencyNotification.Status.COMPLETED,
+        "complete": EmergencyNotification.Status.COMPLETED,
+        "ended": EmergencyNotification.Status.COMPLETED,
+        "failed": EmergencyNotification.Status.FAILED,
+        "busy": EmergencyNotification.Status.FAILED,
+        "no answer": EmergencyNotification.Status.FAILED,
+        "noanswer": EmergencyNotification.Status.FAILED,
+        "cancelled": EmergencyNotification.Status.FAILED,
+        "canceled": EmergencyNotification.Status.FAILED,
+    }
+    new_status = status_map.get(status_text)
+    if new_status is None:
+        raise ValueError("Unsupported Africa's Talking call status.")
+
+    with transaction.atomic():
+        notification = (
+            EmergencyNotification.objects.select_for_update()
+            .select_related("incident", "recipient")
+            .filter(
+                channel="voice",
+                provider_message_id=session_id,
+            )
+            .first()
+        )
+        if notification is None:
+            return None
+        progress = {
+            EmergencyNotification.Status.PENDING: 0,
+            EmergencyNotification.Status.PROCESSING: 1,
+            EmergencyNotification.Status.UNKNOWN: 2,
+            EmergencyNotification.Status.ACCEPTED: 3,
+            EmergencyNotification.Status.RINGING: 4,
+            EmergencyNotification.Status.ANSWERED: 5,
+            EmergencyNotification.Status.COMPLETED: 6,
+        }
+        terminal_statuses = {
+            EmergencyNotification.Status.COMPLETED,
+            EmergencyNotification.Status.FAILED,
+        }
+        if notification.status not in terminal_statuses and (
+            new_status == EmergencyNotification.Status.FAILED
+            or (
+                notification.status in progress
+                and progress[new_status] > progress[notification.status]
+            )
+        ):
+            notification.status = new_status
+            notification.provider_status = status_text[:50]
+            notification.last_error = (
+                f"Call ended with provider status: {status_text}"[:500]
+                if new_status == EmergencyNotification.Status.FAILED
+                else ""
+            )
+            notification.save(
+                update_fields=[
+                    "status",
+                    "provider_status",
+                    "last_error",
+                    "updated_at",
+                ]
+            )
+        return notification
 
 
 def process_pending_voice_notifications(incident_id):

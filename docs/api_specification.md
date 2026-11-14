@@ -54,7 +54,18 @@ Creating a trusted contact with SOS alerts enabled requires
 alerts. Automated voice calls are separately disabled by default; enabling
 `receive_voice_calls` requires `confirm_voice_consent: true`. SMS consent does
 not enable voice calls. Deleting a contact with retained delivery history
-deactivates it.
+deactivates it. Voice consent confirmation/withdrawal timestamps and the
+wording version are returned as read-only fields; each grant and withdrawal
+is also retained as a consent event.
+
+Africa's Talking reports call progress to
+`POST /api/emergency-notifications/voice/callback/?token={callback_token}`.
+The callback token must be high entropy and transmitted only over HTTPS.
+Provider acceptance means the call was queued, not answered; callbacks update
+the notification through ringing, answered, completed, or failed states.
+SMS and voice delivery are queued through Celery after incident creation, and
+Celery Beat recovers pending work and marks stale processing outcomes unknown
+without automatically redialing.
 
 ## Authority Case Workflow
 

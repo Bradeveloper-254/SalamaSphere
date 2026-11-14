@@ -56,6 +56,10 @@ urlpatterns = [
     include("trusted_contacts.urls"),
     ),
     path(
+    "api/emergency-notifications/",
+    include("emergency_notifications.urls"),
+    ),
+    path(
     "dashboard/",
     include("dashboard.urls"),
     ),

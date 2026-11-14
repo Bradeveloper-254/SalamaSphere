@@ -12,8 +12,6 @@ from accounts.models import User
 from devices.models import WearableDevice
 from dashboard.models import IncidentAuditEvent
 from emergency_notifications.models import EmergencyNotification
-from emergency_notifications.providers import SMSResult
-from emergency_notifications.voice_provider import VoiceCallResult
 from notifications.models import Notification
 from threat_analysis.models import ThreatAssessment
 from trusted_contacts.models import TrustedContact
@@ -330,12 +328,8 @@ class IncidentAPITest(TestCase):
             1,
         )
 
-    @override_settings(SMS_PROVIDER="mobile_sasa")
-    @patch("emergency_notifications.providers.MobileSasaProvider.send_sms")
-    def test_wearable_sos_sends_sms_after_successful_creation(
-        self,
-        send_sms,
-    ):
+    @patch("emergency_notifications.tasks.enqueue_incident_notifications.delay")
+    def test_wearable_sos_queues_sms_after_successful_creation(self, enqueue):
         TrustedContact.objects.create(
             user=self.user,
             name="Trusted contact",
@@ -343,11 +337,6 @@ class IncidentAPITest(TestCase):
             is_active=True,
             receive_sos_alerts=True,
             consent_confirmed=True,
-        )
-        send_sms.return_value = SMSResult(
-            accepted=True,
-            provider_message_id="MS123",
-            provider_status="0200",
         )
         device_identifier = "SALAMA-AUTO-CLAIM-001"
         registration_response = self.client.post(
@@ -380,31 +369,17 @@ class IncidentAPITest(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, msg=str(response.data))
-        send_sms.assert_called_once()
-        phone_number, message = send_sms.call_args.args
-        self.assertEqual(phone_number, "+254700000000")
-        self.assertIn("SALAMASPHERE EMERGENCY ALERT", message)
-        self.assertIn(
-            "https://www.google.com/maps/search/?api=1&query="
-            "-1.286389,36.817223",
-            message,
-        )
+        enqueue.assert_called_once_with(response.data["id"])
         notification = EmergencyNotification.objects.get(
             incident_id=response.data["id"],
         )
         self.assertEqual(
             notification.status,
-            EmergencyNotification.Status.ACCEPTED,
+            EmergencyNotification.Status.PENDING,
         )
 
-    @override_settings(SMS_PROVIDER="console", AT_VOICE_MODE="mock")
-    @patch("emergency_notifications.voice_provider.MockVoiceProvider.initiate_call")
-    @patch("emergency_notifications.providers.ConsoleSMSProvider.send_sms")
-    def test_sos_processes_sms_and_consented_voice_after_commit(
-        self,
-        send_sms,
-        initiate_call,
-    ):
+    @patch("emergency_notifications.tasks.enqueue_incident_notifications.delay")
+    def test_sos_queues_sms_and_voice_without_blocking_request(self, enqueue):
         TrustedContact.objects.create(
             user=self.user,
             name="Trusted contact",
@@ -414,17 +389,6 @@ class IncidentAPITest(TestCase):
             consent_confirmed=True,
             receive_voice_calls=True,
         )
-        send_sms.return_value = SMSResult(
-            accepted=True,
-            provider_message_id="SMS-123",
-            provider_status="simulated",
-        )
-        initiate_call.return_value = VoiceCallResult(
-            accepted=True,
-            provider_call_id="VOICE-123",
-            provider_status="simulated",
-        )
-
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
                 self.endpoint,
@@ -436,20 +400,15 @@ class IncidentAPITest(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, response.data)
-        send_sms.assert_called_once()
-        initiate_call.assert_called_once()
+        enqueue.assert_called_once_with(response.data["id"])
         notifications = EmergencyNotification.objects.filter(
             incident_id=response.data["id"],
         )
         self.assertEqual(notifications.count(), 2)
-        voice_notification = notifications.get(channel="voice")
-        self.assertEqual(
-            voice_notification.status,
-            EmergencyNotification.Status.ACCEPTED,
-        )
-        self.assertEqual(
-            voice_notification.provider_message_id,
-            "VOICE-123",
+        self.assertFalse(
+            notifications.exclude(
+                status=EmergencyNotification.Status.PENDING
+            ).exists()
         )
 
     def test_mobile_sos_without_wearable_queues_alerts(self):

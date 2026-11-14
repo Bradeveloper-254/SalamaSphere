@@ -81,11 +81,12 @@ emergency-response service.
 
 ## Automatic wearable incident SMS
 
-Wearable incidents are sent to the admin assignment queue and create SMS
-notifications for the user's active trusted contacts who have consented to
-SOS alerts. Once the incident is successfully committed, pending SMS alerts
-are sent to those contacts. The alert includes the user's name, incident
-time, and a Google Maps link when GPS coordinates are available.
+SOS and wearable incidents are sent to the admin assignment queue and create
+SMS and voice notifications for active trusted contacts who separately
+consented to each channel. After the incident commits, Celery queues delivery
+so provider latency does not delay the incident response. SMS includes a map
+link only for contacts who consented to SMS alerts. Voice calls do not speak
+the survivor's name or precise coordinates.
 
 The mobile app registers a wearable identifier to the signed-in user before
 syncing its SOS incident. Repeated registration by the same account reuses an
@@ -101,13 +102,32 @@ variables before deployment:
 - `MOBILESASA_BASE_URL`: Mobile Sasa API origin; defaults to
   `https://api.mobilesasa.com`.
 
-Keep the provider token in the deployment secret store, not source control.
+Keep provider tokens in the deployment secret store, not source control.
 Set `SMS_PROVIDER=console` to simulate SMS locally, or select `twilio` or
 `esms_africa` to use an alternate configured provider. An accepted response
-confirms submission to the provider, not delivery to the handset. To process
-one existing pending alert explicitly, run
-`python manage.py process --notification-id <notification-uuid>` from the
-backend directory.
+confirms submission to the provider, not delivery to the handset.
+
+Run Redis, then run both background processes from `backend/`:
+
+```text
+celery -A config worker --loglevel=INFO
+celery -A config beat --loglevel=INFO
+```
+
+`CELERY_BROKER_URL` defaults to `redis://127.0.0.1:6379/0`. Beat re-enqueues
+pending notifications and changes stale `processing` records to `unknown`
+without redialing them; provider callbacks can still reconcile a recorded
+call session later. To process one pending alert explicitly, run
+`python manage.py process --notification-id <notification-uuid>`.
+
+To enable Africa's Talking voice calls, configure `AT_VOICE_MODE=africas_talking`,
+`AT_VOICE_USERNAME`, `AT_VOICE_API_KEY`, and `AT_VOICE_NUMBER`. Set
+`AT_VOICE_CALLBACK_TOKEN` to a high-entropy secret and configure
+`AT_VOICE_CALLBACK_URL` as the public HTTPS callback URL with that exact token
+in its `?token=` query parameter. Register the URL with the Africa's Talking
+Voice application so it can play the announcement and report call progress.
+`accepted` means the provider queued the call; callbacks distinguish ringing,
+answered, completed, and failed outcomes.
 
 ## Documentation
 

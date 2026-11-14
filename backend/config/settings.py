@@ -280,3 +280,23 @@ AT_VOICE_CALLBACK_URL = env(
     "AT_VOICE_CALLBACK_URL",
     default="",
 )
+AT_VOICE_CALLBACK_TOKEN = env(
+    "AT_VOICE_CALLBACK_TOKEN",
+    default="",
+)
+
+CELERY_BROKER_URL = env(
+    "CELERY_BROKER_URL",
+    default="redis://127.0.0.1:6379/0",
+)
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_BEAT_SCHEDULE = {
+    "recover-emergency-notifications": {
+        "task": "emergency_notifications.tasks.recover_notifications",
+        "schedule": 60.0,
+    },
+}
+EMERGENCY_NOTIFICATION_PROCESSING_TIMEOUT_MINUTES = env.int(
+    "EMERGENCY_NOTIFICATION_PROCESSING_TIMEOUT_MINUTES",
+    default=10,
+)

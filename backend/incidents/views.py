@@ -19,14 +19,9 @@ from rest_framework.views import APIView
 from devices.models import WearableDevice
 from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
-from emergency_notifications.services import (
-    process_pending_emergency_notifications,
-    queue_emergency_notifications,
-)
-from emergency_notifications.voice_services import (
-    process_pending_voice_notifications,
-    queue_voice_notifications,
-)
+from emergency_notifications.services import queue_emergency_notifications
+from emergency_notifications.tasks import enqueue_incident_notifications
+from emergency_notifications.voice_services import queue_voice_notifications
 from notifications.services import (
     notify_case_assigned,
     notify_case_resolved,
@@ -160,18 +155,12 @@ class IncidentListCreateView(generics.ListCreateAPIView):
                 queued_voice_notifications = queue_voice_notifications(
                     incident
                 )
-                if queued_notifications:
+                if queued_notifications or queued_voice_notifications:
                     transaction.on_commit(
                         lambda incident_id=incident.pk:
-                            process_pending_emergency_notifications(
-                                incident_id
+                            enqueue_incident_notifications.delay(
+                                str(incident_id)
                             ),
-                        robust=True,
-                    )
-                if queued_voice_notifications:
-                    transaction.on_commit(
-                        lambda incident_id=incident.pk:
-                            process_pending_voice_notifications(incident_id),
                         robust=True,
                     )
                 notify_new_incident(incident)

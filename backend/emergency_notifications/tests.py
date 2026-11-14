@@ -7,6 +7,9 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.urls import reverse
+from urllib.parse import parse_qs
+from rest_framework.test import APIClient
 
 from devices.models import WearableDevice
 from evidence.models import Evidence
@@ -19,7 +22,11 @@ from .services import (
     process_emergency_notification,
 )
 from .providers import ConsoleSMSProvider
-from .voice_provider import MockVoiceProvider, VoiceCallResult
+from .voice_provider import (
+    AfricasTalkingVoiceProvider,
+    MockVoiceProvider,
+    VoiceCallResult,
+)
 from .voice_services import (
     generate_emergency_voice_announcement,
     process_voice_notification,
@@ -537,7 +544,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             1,
         )
 
-    def test_announcement_includes_incident_and_location(self):
+    def test_announcement_avoids_name_and_precise_coordinates(self):
         self.incident.latitude = -1.286389
         self.incident.longitude = 36.817223
         self.incident.save(update_fields=["latitude", "longitude"])
@@ -549,9 +556,10 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             self.incident
         )
 
-        self.assertIn("Amina Wanjiku has triggered an SOS", announcement)
-        self.assertIn("latitude -1.286389", announcement)
-        self.assertIn("longitude 36.817223", announcement)
+        self.assertIn("trusted contact needs help", announcement)
+        self.assertNotIn("Amina Wanjiku", announcement)
+        self.assertNotIn("-1.286389", announcement)
+        self.assertNotIn("36.817223", announcement)
 
     def test_mock_provider_accepts_call_and_records_provider_call_id(self):
         self.contact.receive_voice_calls = True
@@ -629,6 +637,161 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertEqual(result.provider_status, "rejected")
         self.assertEqual(result.last_error, "Invalid destination")
         self.assertEqual(result.attempt_count, 1)
+
+    @override_settings(
+        AT_VOICE_USERNAME="salama-test",
+        AT_VOICE_API_KEY="test-api-key",
+        AT_VOICE_NUMBER="+254700000000",
+        AT_VOICE_BASE_URL="https://voice.africastalking.com",
+        AT_VOICE_CALLBACK_URL=(
+            "https://api.example.test/api/emergency-notifications/"
+            "voice/callback/?token=callback-secret"
+        ),
+        AT_VOICE_CALLBACK_TOKEN="callback-secret",
+    )
+    @patch("emergency_notifications.voice_provider.urlopen")
+    def test_africas_talking_provider_authenticates_and_parses_call(
+        self,
+        urlopen,
+    ):
+        response = Mock()
+        response.read.return_value = (
+            b'{"entries":[{"status":"Queued","sessionId":"AT-SESSION-1"}],'
+            b'"errorMessage":""}'
+        )
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        urlopen.return_value = response
+
+        result = AfricasTalkingVoiceProvider().initiate_call(
+            "+254711111111",
+            "Emergency announcement",
+            "notification-1",
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.provider_call_id, "AT-SESSION-1")
+        self.assertEqual(result.provider_status, "Queued")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://voice.africastalking.com/call")
+        self.assertEqual(request.get_method(), "POST")
+        headers = {
+            key.lower(): value for key, value in request.header_items()
+        }
+        self.assertEqual(headers["apikey"], "test-api-key")
+        payload = parse_qs(request.data.decode("utf-8"))
+        self.assertEqual(payload["username"], ["salama-test"])
+        self.assertEqual(payload["from"], ["+254700000000"])
+        self.assertEqual(payload["to"], ["+254711111111"])
+
+    @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
+    def test_voice_callback_tracks_progress_and_returns_private_announcement(
+        self,
+    ):
+        notification = EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=self.contact,
+            channel="voice",
+            status=EmergencyNotification.Status.ACCEPTED,
+            provider_message_id="AT-SESSION-2",
+        )
+        client = APIClient()
+        endpoint = (
+            reverse("africas-talking-voice-callback")
+            + "?token=callback-secret"
+        )
+
+        ringing = client.post(
+            endpoint,
+            {"sessionId": "AT-SESSION-2", "status": "Ringing"},
+        )
+        self.assertEqual(ringing.status_code, 200)
+        notification.refresh_from_db()
+        self.assertEqual(notification.status, EmergencyNotification.Status.RINGING)
+
+        answered = client.post(
+            endpoint,
+            {"sessionId": "AT-SESSION-2", "isActive": "1"},
+        )
+        self.assertEqual(answered.status_code, 200)
+        self.assertIn(b"<Say>", answered.content)
+        notification.refresh_from_db()
+        self.assertEqual(notification.status, EmergencyNotification.Status.ANSWERED)
+
+        completed = client.post(
+            endpoint,
+            {"sessionId": "AT-SESSION-2", "status": "Completed"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        notification.refresh_from_db()
+        self.assertEqual(
+            notification.status,
+            EmergencyNotification.Status.COMPLETED,
+        )
+
+        replayed = client.post(
+            endpoint,
+            {"sessionId": "AT-SESSION-2", "status": "Ringing"},
+        )
+        self.assertEqual(replayed.status_code, 200)
+        notification.refresh_from_db()
+        self.assertEqual(
+            notification.status,
+            EmergencyNotification.Status.COMPLETED,
+        )
+
+    @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
+    def test_voice_callback_rejects_bad_token_and_unknown_session(self):
+        client = APIClient()
+        endpoint = reverse("africas-talking-voice-callback")
+
+        unauthorized = client.post(
+            endpoint + "?token=wrong",
+            {"sessionId": "AT-SESSION-3", "status": "Answered"},
+        )
+        self.assertEqual(unauthorized.status_code, 403)
+
+        missing = client.post(
+            endpoint + "?token=callback-secret",
+            {"sessionId": "AT-UNKNOWN", "status": "Answered"},
+        )
+        self.assertEqual(missing.status_code, 404)
+
+    @override_settings(
+        EMERGENCY_NOTIFICATION_PROCESSING_TIMEOUT_MINUTES=1,
+    )
+    @patch("emergency_notifications.tasks.process_notification.delay")
+    def test_recovery_marks_stale_processing_unknown_without_redial(
+        self,
+        enqueue,
+    ):
+        from .tasks import recover_notifications
+
+        stale = self.create_notification()
+        stale.status = EmergencyNotification.Status.PROCESSING
+        stale.save(update_fields=["status"])
+        EmergencyNotification.objects.filter(pk=stale.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=2)
+        )
+        pending_contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Pending voice contact",
+            phone_number="+254711111111",
+            receive_voice_calls=True,
+        )
+        pending = EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=pending_contact,
+            channel="voice",
+            status=EmergencyNotification.Status.PENDING,
+        )
+
+        self.assertEqual(recover_notifications.run(), 1)
+
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, EmergencyNotification.Status.UNKNOWN)
+        self.assertIn("redial was suppressed", stale.last_error)
+        enqueue.assert_called_once_with(str(pending.pk))
 
     @override_settings(AT_VOICE_MODE="mock")
     @patch("emergency_notifications.voice_provider.MockVoiceProvider.initiate_call")

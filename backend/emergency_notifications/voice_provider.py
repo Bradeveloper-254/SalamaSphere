@@ -1,8 +1,11 @@
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 
@@ -26,6 +29,10 @@ class VoiceCallProvider(Protocol):
         notification_id: str,
     ) -> VoiceCallResult:
         ...
+
+
+class VoiceProviderConfigurationError(ValueError):
+    pass
 
 
 class MockVoiceProvider:
@@ -66,10 +73,102 @@ class MockVoiceProvider:
         )
 
 
+class AfricasTalkingVoiceProvider:
+    """Starts an outbound call using Africa's Talking Voice API."""
+
+    def initiate_call(
+        self,
+        phone_number: str,
+        message: str,
+        notification_id: str,
+    ) -> VoiceCallResult:
+        del message
+        username = settings.AT_VOICE_USERNAME
+        api_key = settings.AT_VOICE_API_KEY
+        caller_number = settings.AT_VOICE_NUMBER
+        callback_url = settings.AT_VOICE_CALLBACK_URL
+        callback_token = settings.AT_VOICE_CALLBACK_TOKEN
+        if not all((username, api_key, caller_number)):
+            raise VoiceProviderConfigurationError(
+                "Africa's Talking voice credentials and caller number "
+                "must be configured."
+            )
+        callback = urlparse(callback_url)
+        if (
+            callback.scheme != "https"
+            or not callback.netloc
+            or not callback_token
+            or callback_token
+            not in parse_qs(callback.query).get("token", [])
+        ):
+            raise VoiceProviderConfigurationError(
+                "Configure an HTTPS Africa's Talking callback URL with "
+                "the configured token query parameter."
+            )
+
+        payload = urlencode({
+            "username": username,
+            "from": caller_number,
+            "to": phone_number,
+        }).encode("utf-8")
+        request = Request(
+            f"{settings.AT_VOICE_BASE_URL.rstrip('/')}/call",
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "apiKey": api_key,
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            body = response.read()
+
+        try:
+            decoded = json.loads(body)
+        except (TypeError, UnicodeDecodeError, ValueError) as error:
+            raise RuntimeError(
+                "Africa's Talking returned an invalid voice API response."
+            ) from error
+
+        entries = decoded.get("entries")
+        entry = entries[0] if isinstance(entries, list) and entries else {}
+        error = str(decoded.get("errorMessage") or "")
+        if not entry and not error:
+            raise RuntimeError(
+                "Africa's Talking returned no call result; outcome is unknown."
+            )
+        provider_status = str(entry.get("status", ""))
+        provider_call_id = str(
+            entry.get("sessionId") or entry.get("session_id") or ""
+        )
+        accepted = provider_status.strip().lower() in {
+            "queued",
+            "accepted",
+            "success",
+        }
+        if accepted and not provider_call_id:
+            logger.warning(
+                "Africa's Talking accepted voice notification %s without "
+                "returning a session ID; callbacks cannot be correlated.",
+                notification_id,
+            )
+        return VoiceCallResult(
+            accepted=accepted,
+            provider_call_id=provider_call_id,
+            provider_status=provider_status or (
+                "rejected" if error else "unknown"
+            ),
+            error=error or (
+                "" if accepted else "Africa's Talking did not queue the call."
+            ),
+        )
+
+
 def get_voice_provider() -> VoiceCallProvider:
     """
     Select the configured voice provider.
-    Only mock mode is supported at this stage.
+    Select the mock provider or Africa's Talking Voice API.
     """
 
     mode = settings.AT_VOICE_MODE
@@ -78,11 +177,8 @@ def get_voice_provider() -> VoiceCallProvider:
         return MockVoiceProvider()
 
     if mode == "africas_talking":
-        raise NotImplementedError(
-            "Africa's Talking voice integration has not "
-            "been enabled yet."
-        )
+        return AfricasTalkingVoiceProvider()
 
-    raise ValueError(
+    raise VoiceProviderConfigurationError(
         f"Unsupported AT_VOICE_MODE: {mode}"
     )

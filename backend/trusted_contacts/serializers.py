@@ -1,7 +1,12 @@
-from rest_framework import serializers
+from django.db import transaction
 from django.utils import timezone
+from rest_framework import serializers
 
-from .models import TrustedContact
+from .models import TrustedContact, VoiceConsentEvent
+
+
+VOICE_CONSENT_METHOD = "trusted_contact_form"
+VOICE_CONSENT_WORDING_VERSION = "voice-consent-v1"
 
 
 class TrustedContactSerializer(serializers.ModelSerializer):
@@ -24,6 +29,10 @@ class TrustedContactSerializer(serializers.ModelSerializer):
             "is_active",
             "receive_sos_alerts",
             "receive_voice_calls",
+            "voice_consent_confirmed_at",
+            "voice_consent_withdrawn_at",
+            "voice_consent_method",
+            "voice_consent_version",
             "consent_confirmed",
             "consent_confirmed_at",
             "confirm_sos_consent",
@@ -36,6 +45,10 @@ class TrustedContactSerializer(serializers.ModelSerializer):
             "id",
             "consent_confirmed",
             "consent_confirmed_at",
+            "voice_consent_confirmed_at",
+            "voice_consent_withdrawn_at",
+            "voice_consent_method",
+            "voice_consent_version",
             "created_at",
             "updated_at",
         ]
@@ -90,6 +103,7 @@ class TrustedContactSerializer(serializers.ModelSerializer):
             })
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
         consent_confirmed = validated_data.pop(
             "confirm_sos_consent",
@@ -118,11 +132,24 @@ class TrustedContactSerializer(serializers.ModelSerializer):
         contact.consent_confirmed_at = (
             timezone.now() if consent_confirmed else None
         )
-        if not voice_consent_confirmed:
+        if contact.receive_voice_calls and voice_consent_confirmed:
+            contact.voice_consent_confirmed_at = timezone.now()
+            contact.voice_consent_withdrawn_at = None
+            contact.voice_consent_method = VOICE_CONSENT_METHOD
+            contact.voice_consent_version = VOICE_CONSENT_WORDING_VERSION
+        else:
             contact.receive_voice_calls = False
         contact.save()
+        if contact.receive_voice_calls:
+            VoiceConsentEvent.objects.create(
+                contact=contact,
+                action=VoiceConsentEvent.Action.GRANTED,
+                method=VOICE_CONSENT_METHOD,
+                wording_version=VOICE_CONSENT_WORDING_VERSION,
+            )
         return contact
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         consent_confirmed = validated_data.pop(
             "confirm_sos_consent",
@@ -132,17 +159,36 @@ class TrustedContactSerializer(serializers.ModelSerializer):
             "confirm_voice_consent",
             False,
         )
+        previous_voice_consent = instance.receive_voice_calls
         for field, value in validated_data.items():
             setattr(instance, field, value)
+        voice_consent_event = None
         if (
-            "receive_voice_calls" in validated_data
-            and not voice_consent_confirmed
+            validated_data.get("receive_voice_calls") is True
+            and voice_consent_confirmed
         ):
-            instance.receive_voice_calls = False
+            instance.voice_consent_confirmed_at = timezone.now()
+            instance.voice_consent_withdrawn_at = None
+            instance.voice_consent_method = VOICE_CONSENT_METHOD
+            instance.voice_consent_version = VOICE_CONSENT_WORDING_VERSION
+            voice_consent_event = VoiceConsentEvent.Action.GRANTED
+        elif (
+            validated_data.get("receive_voice_calls") is False
+            and previous_voice_consent
+        ):
+            instance.voice_consent_withdrawn_at = timezone.now()
+            voice_consent_event = VoiceConsentEvent.Action.WITHDRAWN
         if consent_confirmed is not None:
             instance.consent_confirmed = consent_confirmed
             instance.consent_confirmed_at = (
                 timezone.now() if consent_confirmed else None
             )
         instance.save()
+        if voice_consent_event is not None:
+            VoiceConsentEvent.objects.create(
+                contact=instance,
+                action=voice_consent_event,
+                method=VOICE_CONSENT_METHOD,
+                wording_version=VOICE_CONSENT_WORDING_VERSION,
+            )
         return instance

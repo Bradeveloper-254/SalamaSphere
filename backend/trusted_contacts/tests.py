@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from emergency_notifications.models import EmergencyNotification
 from incidents.models import Incident
 
-from .models import TrustedContact
+from .models import TrustedContact, VoiceConsentEvent
 
 
 User = get_user_model()
@@ -88,6 +88,12 @@ class TrustedContactApiTests(TestCase):
         self.assertEqual(accepted.status_code, 201, accepted.data)
         self.assertTrue(accepted.data["receive_voice_calls"])
         self.assertFalse(accepted.data["receive_sos_alerts"])
+        contact = TrustedContact.objects.get(user=self.user)
+        self.assertIsNotNone(contact.voice_consent_confirmed_at)
+        self.assertEqual(
+            contact.voice_consent_events.get().action,
+            VoiceConsentEvent.Action.GRANTED,
+        )
 
     def test_enabling_voice_calls_on_existing_contact_requires_consent(self):
         contact = TrustedContact.objects.create(
@@ -118,6 +124,26 @@ class TrustedContactApiTests(TestCase):
         )
         self.assertEqual(accepted.status_code, 200, accepted.data)
         self.assertTrue(accepted.data["receive_voice_calls"])
+        contact.refresh_from_db()
+        self.assertIsNotNone(contact.voice_consent_confirmed_at)
+        withdrawn = self.client.patch(
+            endpoint,
+            {"receive_voice_calls": False},
+            format="json",
+        )
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.data)
+        contact.refresh_from_db()
+        self.assertFalse(contact.receive_voice_calls)
+        self.assertIsNotNone(contact.voice_consent_withdrawn_at)
+        self.assertEqual(
+            list(
+                contact.voice_consent_events.values_list("action", flat=True)
+            ),
+            [
+                VoiceConsentEvent.Action.GRANTED,
+                VoiceConsentEvent.Action.WITHDRAWN,
+            ],
+        )
 
     def test_deleting_contact_with_delivery_history_deactivates_it(self):
         created = self.client.post(

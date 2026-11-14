@@ -22,6 +22,22 @@ class TrustedContact(models.Model):
 
     receive_sos_alerts = models.BooleanField(default=True)
     receive_voice_calls = models.BooleanField(default=False)
+    voice_consent_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    voice_consent_withdrawn_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    voice_consent_method = models.CharField(
+        max_length=50,
+        blank=True,
+    )
+    voice_consent_version = models.CharField(
+        max_length=50,
+        blank=True,
+    )
 
     consent_confirmed = models.BooleanField(default=False)
     consent_confirmed_at = models.DateTimeField(
@@ -43,3 +59,22 @@ class TrustedContact(models.Model):
 
     def __str__(self):
         return f"{self.name} — user {self.user_id}"
+
+
+class VoiceConsentEvent(models.Model):
+    class Action(models.TextChoices):
+        GRANTED = "granted", "Granted"
+        WITHDRAWN = "withdrawn", "Withdrawn"
+
+    contact = models.ForeignKey(
+        TrustedContact,
+        on_delete=models.PROTECT,
+        related_name="voice_consent_events",
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    method = models.CharField(max_length=50)
+    wording_version = models.CharField(max_length=50)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["occurred_at"]

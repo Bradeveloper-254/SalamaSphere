@@ -307,7 +307,7 @@ class IncidentEvidenceApiTests(TestCase):
                     b"audio-data",
                 )
 
-    @patch("evidence.views.process_pending_emergency_notifications")
+    @patch("evidence.views.enqueue_incident_notifications.delay")
     def test_audio_upload_automatically_triggers_pending_contact_sms(
         self,
         process_notifications,
@@ -348,7 +348,7 @@ class IncidentEvidenceApiTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, response.data)
-        process_notifications.assert_called_once_with(self.incident.id)
+        process_notifications.assert_called_once_with(str(self.incident.id))
 
     @override_settings(
         SALAMASPHERE_PUBLIC_BASE_URL="https://api.salama.example",
