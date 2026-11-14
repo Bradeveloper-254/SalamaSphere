@@ -87,6 +87,11 @@ SOS alerts. Once the incident is successfully committed, pending SMS alerts
 are sent to those contacts. The alert includes the user's name, incident
 time, and a Google Maps link when GPS coordinates are available.
 
+The mobile app registers a wearable identifier to the signed-in user before
+syncing its SOS incident. Repeated registration by the same account reuses an
+active registration; inactive devices and identifiers owned by another
+account cannot be claimed.
+
 Mobile Sasa is the default SMS provider. Configure these backend environment
 variables before deployment:
 

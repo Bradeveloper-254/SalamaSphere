@@ -6,10 +6,19 @@ from emergency_notifications.models import EmergencyNotification
 from emergency_notifications.services import (
     process_emergency_notification,
 )
+from emergency_notifications.voice_services import (
+    process_voice_notification,
+)
 
 
 class Command(BaseCommand):
-    help = "Process pending SalamaSphere SOS SMS notifications."
+    help = "Process pending SalamaSphere SOS SMS and voice notifications."
+
+    @staticmethod
+    def process_notification(notification):
+        if notification.channel == "voice":
+            return process_voice_notification(notification.pk)
+        return process_emergency_notification(notification.pk)
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -30,7 +39,7 @@ class Command(BaseCommand):
                     f"Notification {notification_id!r} does not exist."
                 ) from error
 
-            result = process_emergency_notification(notification.pk)
+            result = self.process_notification(notification)
             self.stdout.write(f"{result.id}: {result.status}")
             return
 
@@ -41,7 +50,7 @@ class Command(BaseCommand):
         processed = 0
 
         for notification in pending.iterator():
-            result = process_emergency_notification(notification.pk)
+            result = self.process_notification(notification)
 
             self.stdout.write(
                 f"{result.id}: {result.status}"

@@ -248,3 +248,35 @@ MOBILESASA_SENDER_ID = env(
     "MOBILESASA_SENDER_ID",
     default="MOBILESASA",
 )
+
+# Africa's Talking Voice configuration
+
+AT_VOICE_MODE = env(
+    "AT_VOICE_MODE",
+    default="mock",
+).lower()
+
+AT_VOICE_USERNAME = env(
+    "AT_VOICE_USERNAME",
+    default="",
+)
+
+AT_VOICE_API_KEY = env(
+    "AT_VOICE_API_KEY",
+    default="",
+)
+
+AT_VOICE_NUMBER = env(
+    "AT_VOICE_NUMBER",
+    default="",
+)
+
+AT_VOICE_BASE_URL = env(
+    "AT_VOICE_BASE_URL",
+    default="https://voice.africastalking.com",
+)
+
+AT_VOICE_CALLBACK_URL = env(
+    "AT_VOICE_CALLBACK_URL",
+    default="",
+)

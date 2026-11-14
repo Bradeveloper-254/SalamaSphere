@@ -62,6 +62,63 @@ class TrustedContactApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(TrustedContact.objects.exists())
 
+    def test_voice_calls_require_separate_explicit_consent(self):
+        payload = {
+            "name": "Safety contact",
+            "phone_number": "+254700000000",
+            "receive_sos_alerts": False,
+            "receive_voice_calls": True,
+        }
+
+        rejected = self.client.post(
+            self.endpoint,
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertFalse(TrustedContact.objects.exists())
+
+        accepted = self.client.post(
+            self.endpoint,
+            {**payload, "confirm_voice_consent": True},
+            format="json",
+        )
+
+        self.assertEqual(accepted.status_code, 201, accepted.data)
+        self.assertTrue(accepted.data["receive_voice_calls"])
+        self.assertFalse(accepted.data["receive_sos_alerts"])
+
+    def test_enabling_voice_calls_on_existing_contact_requires_consent(self):
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Safety contact",
+            phone_number="+254700000000",
+            receive_sos_alerts=False,
+        )
+        endpoint = reverse(
+            "trusted-contact-detail",
+            kwargs={"pk": contact.pk},
+        )
+
+        rejected = self.client.patch(
+            endpoint,
+            {"receive_voice_calls": True},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+        accepted = self.client.patch(
+            endpoint,
+            {
+                "receive_voice_calls": True,
+                "confirm_voice_consent": True,
+            },
+            format="json",
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertTrue(accepted.data["receive_voice_calls"])
+
     def test_deleting_contact_with_delivery_history_deactivates_it(self):
         created = self.client.post(
             self.endpoint,

@@ -176,11 +176,12 @@ function renderNav() {
 
 function renderContacts() {
   const rows = state.contacts.length
-    ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Relationship</th><th>SOS alerts</th><th></th></tr></thead><tbody>
+    ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Relationship</th><th>SOS alerts</th><th>Voice calls</th><th></th></tr></thead><tbody>
       ${state.contacts.map((contact) => `<tr>
         <td>${esc(contact.name)}</td><td>${esc(contact.phone_number)}</td>
         <td>${esc(contact.relationship || '-')}</td>
         <td>${contact.receive_sos_alerts ? 'Enabled' : 'Disabled'}</td>
+        <td>${contact.receive_voice_calls ? 'Enabled' : 'Disabled'}</td>
         <td><button class="text-action" data-remove-contact="${contact.id}">Remove</button></td>
       </tr>`).join('')}
     </tbody></table></div>`
@@ -198,6 +199,8 @@ function renderContacts() {
       <label>Relationship<input name="relationship" maxlength="50"></label>
       <label class="check-field"><input name="receive_sos_alerts" type="checkbox" checked> Receive SOS alerts</label>
       <label class="check-field"><input name="confirm_sos_consent" type="checkbox"> I confirm this person agreed to receive SOS alerts</label>
+      <label class="check-field"><input name="receive_voice_calls" type="checkbox"> Receive automated SOS voice calls</label>
+      <label class="check-field"><input name="confirm_voice_consent" type="checkbox"> I separately confirm this person agreed to automated voice calls</label>
       <div><button class="action" type="submit">Save contact</button></div>
     </form>
   </div>`;
@@ -396,6 +399,8 @@ function bindContactForm() {
           relationship: formData.get('relationship'),
           receive_sos_alerts: formData.has('receive_sos_alerts'),
           confirm_sos_consent: formData.has('confirm_sos_consent'),
+          receive_voice_calls: formData.has('receive_voice_calls'),
+          confirm_voice_consent: formData.has('confirm_voice_consent'),
         }),
       });
       showNotice('Trusted contact saved.', true);

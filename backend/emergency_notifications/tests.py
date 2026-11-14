@@ -19,6 +19,12 @@ from .services import (
     process_emergency_notification,
 )
 from .providers import ConsoleSMSProvider
+from .voice_provider import MockVoiceProvider, VoiceCallResult
+from .voice_services import (
+    generate_emergency_voice_announcement,
+    process_voice_notification,
+    queue_voice_notifications,
+)
 
 
 User = get_user_model()
@@ -320,6 +326,7 @@ class ProcessEmergencyNotificationTests(
 
         fake_provider.send_sms.assert_not_called()
 
+
     def test_wearable_alert_does_not_wait_for_audio_upload(self):
         notification = self.create_notification()
         Evidence.objects.filter(incident=self.incident).delete()
@@ -492,3 +499,169 @@ class ProcessEmergencyNotificationTests(
         )
 
         fake_provider.send_sms.assert_not_called()
+
+
+class VoiceNotificationTests(EmergencyNotificationTestBase):
+    def test_voice_queue_requires_its_own_opt_in(self):
+        self.assertEqual(queue_voice_notifications(self.incident), [])
+
+        self.contact.receive_sos_alerts = False
+        self.contact.consent_confirmed = False
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=[
+            "receive_sos_alerts",
+            "consent_confirmed",
+            "receive_voice_calls",
+        ])
+
+        queued = queue_voice_notifications(self.incident)
+
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0].channel, "voice")
+
+    def test_queueing_same_incident_twice_does_not_duplicate_calls(self):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+
+        first = queue_voice_notifications(self.incident)
+        second = queue_voice_notifications(self.incident)
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+        self.assertEqual(
+            EmergencyNotification.objects.filter(
+                incident=self.incident,
+                recipient=self.contact,
+                channel="voice",
+            ).count(),
+            1,
+        )
+
+    def test_announcement_includes_incident_and_location(self):
+        self.incident.latitude = -1.286389
+        self.incident.longitude = 36.817223
+        self.incident.save(update_fields=["latitude", "longitude"])
+        self.user.first_name = "Amina"
+        self.user.last_name = "Wanjiku"
+        self.user.save(update_fields=["first_name", "last_name"])
+
+        announcement = generate_emergency_voice_announcement(
+            self.incident
+        )
+
+        self.assertIn("Amina Wanjiku has triggered an SOS", announcement)
+        self.assertIn("latitude -1.286389", announcement)
+        self.assertIn("longitude 36.817223", announcement)
+
+    def test_mock_provider_accepts_call_and_records_provider_call_id(self):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+        notification = queue_voice_notifications(self.incident)[0]
+
+        result = process_voice_notification(
+            notification.pk,
+            provider=MockVoiceProvider(),
+        )
+
+        self.assertEqual(result.status, EmergencyNotification.Status.ACCEPTED)
+        self.assertTrue(result.provider_message_id.startswith("MOCK-"))
+        self.assertEqual(result.provider_status, "simulated")
+        self.assertEqual(result.attempt_count, 1)
+
+    def test_call_is_not_processed_after_voice_consent_is_revoked(self):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+        notification = queue_voice_notifications(self.incident)[0]
+        self.contact.receive_voice_calls = False
+        self.contact.save(update_fields=["receive_voice_calls"])
+        provider = Mock()
+
+        result = process_voice_notification(
+            notification.pk,
+            provider=provider,
+        )
+
+        self.assertEqual(result.status, EmergencyNotification.Status.FAILED)
+        provider.initiate_call.assert_not_called()
+
+    def test_provider_exception_marks_call_outcome_unknown(self):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+        notification = queue_voice_notifications(self.incident)[0]
+        provider = Mock()
+        provider.initiate_call.side_effect = TimeoutError("timeout")
+
+        result = process_voice_notification(
+            notification.pk,
+            provider=provider,
+        )
+
+        self.assertEqual(result.status, EmergencyNotification.Status.UNKNOWN)
+        self.assertEqual(result.provider_status, "unknown")
+        self.assertEqual(result.attempt_count, 1)
+
+    def test_voice_processing_does_not_send_sms_notifications(self):
+        notification = self.create_notification()
+        provider = Mock()
+
+        result = process_voice_notification(notification.pk, provider=provider)
+
+        self.assertEqual(result.status, EmergencyNotification.Status.FAILED)
+        provider.initiate_call.assert_not_called()
+
+    def test_rejected_call_records_provider_status_and_error(self):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+        notification = queue_voice_notifications(self.incident)[0]
+        provider = Mock()
+        provider.initiate_call.return_value = VoiceCallResult(
+            accepted=False,
+            provider_status="rejected",
+            error="Invalid destination",
+        )
+
+        result = process_voice_notification(
+            notification.pk,
+            provider=provider,
+        )
+
+        self.assertEqual(result.status, EmergencyNotification.Status.FAILED)
+        self.assertEqual(result.provider_status, "rejected")
+        self.assertEqual(result.last_error, "Invalid destination")
+        self.assertEqual(result.attempt_count, 1)
+
+    @override_settings(AT_VOICE_MODE="mock")
+    @patch("emergency_notifications.voice_provider.MockVoiceProvider.initiate_call")
+    @patch("emergency_notifications.providers.ConsoleSMSProvider.send_sms")
+    def test_management_command_processes_selected_voice_notification(
+        self,
+        send_sms,
+        initiate_call,
+    ):
+        self.contact.receive_voice_calls = True
+        self.contact.save(update_fields=["receive_voice_calls"])
+        notification = queue_voice_notifications(self.incident)[0]
+        initiate_call.return_value = VoiceCallResult(
+            accepted=True,
+            provider_call_id="VOICE-SELECTED",
+            provider_status="simulated",
+        )
+
+        call_command(
+            "process",
+            "--notification-id",
+            str(notification.pk),
+            stdout=StringIO(),
+        )
+
+        notification.refresh_from_db()
+        self.assertEqual(
+            notification.status,
+            EmergencyNotification.Status.ACCEPTED,
+        )
+        self.assertEqual(
+            notification.provider_message_id,
+            "VOICE-SELECTED",
+        )
+        initiate_call.assert_called_once()
+        send_sms.assert_not_called()

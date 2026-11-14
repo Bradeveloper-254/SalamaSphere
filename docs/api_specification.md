@@ -51,7 +51,10 @@ administrators or survivors with a case assigned to them; the resulting message
 is delivered to the recipient's in-app notification inbox.
 Creating a trusted contact with SOS alerts enabled requires
 `confirm_sos_consent: true`, confirming the user has permission to send those
-alerts. Deleting a contact with retained delivery history deactivates it.
+alerts. Automated voice calls are separately disabled by default; enabling
+`receive_voice_calls` requires `confirm_voice_consent: true`. SMS consent does
+not enable voice calls. Deleting a contact with retained delivery history
+deactivates it.
 
 ## Authority Case Workflow
 
@@ -94,7 +97,9 @@ Incident creation requires an authenticated user. Wearable-origin incidents
 must include the identifier of an active wearable owned by that user. Mobile
 SOS events may be submitted without a wearable. Eligible, consented trusted
 contacts are queued for SOS SMS with the incident severity and a map link when
-coordinates were captured. The server stores an initial rules-based threat assessment and
+coordinates were captured. Contacts who separately opt in to automated voice
+calls are queued for mock-mode calls by default. The server stores an initial
+rules-based threat assessment and
 raises the stored priority when supported keywords or explicit indicators
 suggest a higher level; assessments flagged by the rules require human review.
 Keyword checks are a triage aid, not a validated risk prediction.

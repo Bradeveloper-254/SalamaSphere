@@ -21,6 +21,7 @@ class TrustedContact(models.Model):
     is_active = models.BooleanField(default=True)
 
     receive_sos_alerts = models.BooleanField(default=True)
+    receive_voice_calls = models.BooleanField(default=False)
 
     consent_confirmed = models.BooleanField(default=False)
     consent_confirmed_at = models.DateTimeField(
