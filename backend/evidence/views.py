@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 
+from backend.emergency_notifications.dispatcher import dispatch_incident_notifications
 from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
 
@@ -34,7 +35,9 @@ from emergency_notifications.message_builder import (
     ACCESS_LINK_MAX_AGE_SECONDS,
     ACCESS_LINK_SALT,
 )
-from emergency_notifications.tasks import enqueue_incident_notifications
+from emergency_notifications.services import (
+    process_pending_emergency_notifications,
+)
 
 from .crypto import decrypt_evidence, encrypt_evidence
 from .models import Evidence
@@ -238,7 +241,7 @@ class EvidenceUploadView(APIView):
         ):
             transaction.on_commit(
                 lambda incident_id=incident.pk: (
-                    enqueue_incident_notifications.delay(str(incident_id))
+                    dispatch_incident_notifications(incident_id)
                 ),
                 robust=True,
             )
