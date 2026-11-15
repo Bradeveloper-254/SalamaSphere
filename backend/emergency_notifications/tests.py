@@ -31,6 +31,7 @@ from .voice_services import (
     generate_emergency_voice_announcement,
     process_voice_notification,
     queue_voice_notifications,
+    update_voice_call_from_callback,
 )
 
 
@@ -280,6 +281,25 @@ class ProcessEmergencyNotificationTests(
             "unknown",
         )
 
+    @override_settings(
+        SMS_PROVIDER="mobile_sasa",
+        MOBILESASA_TOKEN="test-token",
+        MOBILESASA_BASE_URL="https://sms.example",
+        MOBILESASA_SENDER_ID="SALAMA",
+    )
+    @patch("emergency_notifications.providers.urlopen")
+    def test_mobile_sasa_timeout_is_unknown_and_not_retried(self, urlopen):
+        notification = self.create_notification()
+        urlopen.side_effect = TimeoutError("provider timed out")
+
+        first = process_emergency_notification(notification.pk)
+        second = process_emergency_notification(notification.pk)
+
+        self.assertEqual(first.status, EmergencyNotification.Status.UNKNOWN)
+        self.assertEqual(second.status, EmergencyNotification.Status.UNKNOWN)
+        self.assertEqual(first.attempt_count, 1)
+        urlopen.assert_called_once()
+
     def test_accepted_notification_is_not_sent_again(self):
         notification = self.create_notification()
 
@@ -521,6 +541,9 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             "receive_voice_calls",
         ])
 
+        self.assertEqual(queue_voice_notifications(self.incident), [])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=["voice_consent_confirmed_at"])
         queued = queue_voice_notifications(self.incident)
 
         self.assertEqual(len(queued), 1)
@@ -528,7 +551,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
 
     def test_queueing_same_incident_twice_does_not_duplicate_calls(self):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
 
         first = queue_voice_notifications(self.incident)
         second = queue_voice_notifications(self.incident)
@@ -566,19 +593,25 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
     def test_test_announcement_is_explicit_and_does_not_share_incident_details(
         self,
     ):
+        self.user.first_name = "Amina"
+        self.user.last_name = "Wanjiku"
+        self.user.save(update_fields=["first_name", "last_name"])
         announcement = generate_emergency_voice_announcement(self.incident)
 
         self.assertIn("test automated voice call", announcement)
         self.assertIn("No emergency has been triggered", announcement)
         self.assertIn("not a real emergency", announcement)
-        self.assertIn("Bradley Minyata", announcement)
         self.assertNotIn(self.user.get_full_name(), announcement)
         self.assertNotIn(str(self.incident.latitude), announcement)
         self.assertNotIn(str(self.incident.longitude), announcement)
 
     def test_mock_provider_accepts_call_and_records_provider_call_id(self):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
         notification = queue_voice_notifications(self.incident)[0]
 
         result = process_voice_notification(
@@ -591,9 +624,42 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertEqual(result.provider_status, "simulated")
         self.assertEqual(result.attempt_count, 1)
 
+    def test_callback_before_provider_response_is_not_overwritten(self):
+        self.contact.receive_voice_calls = True
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
+        notification = queue_voice_notifications(self.incident)[0]
+        provider = Mock()
+
+        def callback_then_response(phone_number, message, request_id):
+            update_voice_call_from_callback(
+                "AT-EARLY-2",
+                "Bridged",
+                client_request_id=request_id,
+            )
+            return VoiceCallResult(
+                accepted=True,
+                provider_call_id="AT-EARLY-2",
+                provider_status="Queued",
+            )
+
+        provider.initiate_call.side_effect = callback_then_response
+        result = process_voice_notification(notification.pk, provider=provider)
+
+        self.assertEqual(result.status, EmergencyNotification.Status.ANSWERED)
+        self.assertEqual(result.provider_message_id, "AT-EARLY-2")
+        self.assertEqual(result.provider_status, "bridged")
+
     def test_call_is_not_processed_after_voice_consent_is_revoked(self):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
         notification = queue_voice_notifications(self.incident)[0]
         self.contact.receive_voice_calls = False
         self.contact.save(update_fields=["receive_voice_calls"])
@@ -609,7 +675,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
 
     def test_provider_exception_marks_call_outcome_unknown(self):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
         notification = queue_voice_notifications(self.incident)[0]
         provider = Mock()
         provider.initiate_call.side_effect = TimeoutError("timeout")
@@ -634,7 +704,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
 
     def test_rejected_call_records_provider_status_and_error(self):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
         notification = queue_voice_notifications(self.incident)[0]
         provider = Mock()
         provider.initiate_call.return_value = VoiceCallResult(
@@ -698,6 +772,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertEqual(payload["username"], ["salama-test"])
         self.assertEqual(payload["from"], ["+254700000000"])
         self.assertEqual(payload["to"], ["+254711111111"])
+        self.assertEqual(payload["clientRequestId"], ["notification-1"])
 
     @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
     def test_voice_callback_tracks_progress_and_returns_private_announcement(
@@ -726,7 +801,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
 
         answered = client.post(
             endpoint,
-            {"sessionId": "AT-SESSION-2", "isActive": "1"},
+            {
+                "sessionId": "AT-SESSION-2",
+                "status": "Bridged",
+                "isActive": "1",
+            },
         )
         self.assertEqual(answered.status_code, 200)
         self.assertIn(b"<Say>", answered.content)
@@ -756,6 +835,58 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         )
 
     @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
+    def test_early_callback_uses_client_request_id_and_maps_dialing(self):
+        notification = EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=self.contact,
+            channel="voice",
+            status=EmergencyNotification.Status.PROCESSING,
+            provider_request_id="request-early-1",
+        )
+        client = APIClient()
+        response = client.post(
+            reverse("africas-talking-voice-callback")
+            + "?token=callback-secret",
+            {
+                "sessionId": "AT-EARLY-1",
+                "clientRequestId": "request-early-1",
+                "status": "Dialing",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        notification.refresh_from_db()
+        self.assertEqual(notification.provider_message_id, "AT-EARLY-1")
+        self.assertEqual(notification.provider_status, "dialing")
+        self.assertEqual(notification.status, EmergencyNotification.Status.PROCESSING)
+
+    @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
+    def test_active_callback_does_not_mean_answered(self):
+        notification = EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=self.contact,
+            channel="voice",
+            status=EmergencyNotification.Status.ACCEPTED,
+            provider_request_id="request-active-1",
+        )
+        response = APIClient().post(
+            reverse("africas-talking-voice-callback")
+            + "?token=callback-secret",
+            {
+                "sessionId": "AT-ACTIVE-1",
+                "clientRequestId": "request-active-1",
+                "status": "Active",
+                "isActive": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        notification.refresh_from_db()
+        self.assertEqual(notification.status, EmergencyNotification.Status.RINGING)
+        self.assertNotEqual(notification.status, EmergencyNotification.Status.ANSWERED)
+        self.assertIn(b"<Say>", response.content)
+
+    @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
     def test_voice_callback_rejects_bad_token_and_unknown_session(self):
         client = APIClient()
         endpoint = reverse("africas-talking-voice-callback")
@@ -771,6 +902,34 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             {"sessionId": "AT-UNKNOWN", "status": "Answered"},
         )
         self.assertEqual(missing.status_code, 404)
+
+    def test_provider_terminal_statuses_fail_the_correlated_call(self):
+        notification = EmergencyNotification.objects.create(
+            incident=self.incident,
+            recipient=self.contact,
+            channel="voice",
+            status=EmergencyNotification.Status.ACCEPTED,
+            provider_message_id="AT-TERMINAL-1",
+        )
+        for status in ("NotAnswered", "Expired"):
+            with self.subTest(status=status):
+                notification.status = EmergencyNotification.Status.ACCEPTED
+                notification.provider_message_id = f"AT-{status}"
+                notification.save(update_fields=[
+                    "status",
+                    "provider_message_id",
+                ])
+
+                updated = update_voice_call_from_callback(
+                    f"AT-{status}",
+                    status,
+                )
+
+                self.assertEqual(updated.pk, notification.pk)
+                self.assertEqual(
+                    updated.status,
+                    EmergencyNotification.Status.FAILED,
+                )
 
     @override_settings(
         EMERGENCY_NOTIFICATION_PROCESSING_TIMEOUT_MINUTES=1,
@@ -808,6 +967,67 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertIn("redial was suppressed", stale.last_error)
         enqueue.assert_called_once_with(str(pending.pk))
 
+
+class PendingRecoveryCommandTests(EmergencyNotificationTestBase):
+    @patch(
+        "emergency_notifications.management.commands.recover_pending."
+        "process_emergency_notification"
+    )
+    @patch(
+        "emergency_notifications.management.commands.recover_pending."
+        "process_voice_notification"
+    )
+    def test_only_pending_records_are_processed_and_stale_work_is_unknown(
+        self,
+        process_voice,
+        process_sms,
+    ):
+        stale = self.create_notification()
+        stale.status = EmergencyNotification.Status.PROCESSING
+        stale.save(update_fields=["status"])
+        EmergencyNotification.objects.filter(pk=stale.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=2)
+        )
+
+        pending_contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Pending SMS contact",
+            phone_number="+254711111111",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        )
+        pending = self.create_notification(contact=pending_contact)
+
+        unknown_contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Unknown SMS contact",
+            phone_number="+254722222222",
+            is_active=True,
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        )
+        unknown = self.create_notification(contact=unknown_contact)
+        unknown.status = EmergencyNotification.Status.UNKNOWN
+        unknown.save(update_fields=["status"])
+
+        process_sms.return_value = Mock(
+            status=EmergencyNotification.Status.ACCEPTED
+        )
+        call_command(
+            "recover_pending",
+            "--stale-minutes",
+            "1",
+            stdout=StringIO(),
+        )
+
+        stale.refresh_from_db()
+        unknown.refresh_from_db()
+        self.assertEqual(stale.status, EmergencyNotification.Status.UNKNOWN)
+        self.assertEqual(unknown.status, EmergencyNotification.Status.UNKNOWN)
+        process_sms.assert_called_once_with(pending.pk)
+        process_voice.assert_not_called()
+
     @override_settings(AT_VOICE_MODE="mock")
     @patch("emergency_notifications.voice_provider.MockVoiceProvider.initiate_call")
     @patch("emergency_notifications.providers.ConsoleSMSProvider.send_sms")
@@ -817,7 +1037,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         initiate_call,
     ):
         self.contact.receive_voice_calls = True
-        self.contact.save(update_fields=["receive_voice_calls"])
+        self.contact.voice_consent_confirmed_at = timezone.now()
+        self.contact.save(update_fields=[
+            "receive_voice_calls",
+            "voice_consent_confirmed_at",
+        ])
         notification = queue_voice_notifications(self.incident)[0]
         initiate_call.return_value = VoiceCallResult(
             accepted=True,

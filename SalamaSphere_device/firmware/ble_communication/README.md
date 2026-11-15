@@ -1,5 +1,13 @@
 # SalamaSphere wearable firmware
 
+## Flutter-integrated firmware
+
+Build `../production/salamasphere_wearable.ino` for the integrated prototype.
+It is firmware v1.4.2 and matches the UUIDs and framed audio transfer protocol
+in the current Flutter app. The remaining instructions on this page describe
+this older `ble_communication.ino` sketch, which is not compatible with the
+current app.
+
 Open `ble_communication.ino` in Arduino IDE and select the ESP32-S3 board.
 Install the ESP32 board package and NimBLE-Arduino 2.5.1. The sketch uses
 microSD (SPI) for WAV storage, NimBLE for BLE, and the built-in I2S driver.

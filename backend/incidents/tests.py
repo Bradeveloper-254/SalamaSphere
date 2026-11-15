@@ -328,8 +328,8 @@ class IncidentAPITest(TestCase):
             1,
         )
 
-    @patch("emergency_notifications.tasks.enqueue_incident_notifications.delay")
-    def test_wearable_sos_queues_sms_after_successful_creation(self, enqueue):
+    @patch("incidents.views.dispatch_incident_notifications")
+    def test_wearable_sos_dispatches_after_successful_creation(self, dispatch):
         TrustedContact.objects.create(
             user=self.user,
             name="Trusted contact",
@@ -369,7 +369,9 @@ class IncidentAPITest(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, msg=str(response.data))
-        enqueue.assert_called_once_with(response.data["id"])
+        dispatch.assert_called_once_with(
+            Incident.objects.get(pk=response.data["id"]).pk
+        )
         notification = EmergencyNotification.objects.get(
             incident_id=response.data["id"],
         )
@@ -378,8 +380,8 @@ class IncidentAPITest(TestCase):
             EmergencyNotification.Status.PENDING,
         )
 
-    @patch("emergency_notifications.tasks.enqueue_incident_notifications.delay")
-    def test_sos_queues_sms_and_voice_without_blocking_request(self, enqueue):
+    @patch("incidents.views.dispatch_incident_notifications")
+    def test_sos_queues_sms_and_voice_for_web_dispatch(self, dispatch):
         TrustedContact.objects.create(
             user=self.user,
             name="Trusted contact",
@@ -388,6 +390,7 @@ class IncidentAPITest(TestCase):
             receive_sos_alerts=True,
             consent_confirmed=True,
             receive_voice_calls=True,
+            voice_consent_confirmed_at=timezone.now(),
         )
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
@@ -400,7 +403,9 @@ class IncidentAPITest(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, response.data)
-        enqueue.assert_called_once_with(response.data["id"])
+        dispatch.assert_called_once_with(
+            Incident.objects.get(pk=response.data["id"]).pk
+        )
         notifications = EmergencyNotification.objects.filter(
             incident_id=response.data["id"],
         )

@@ -161,6 +161,8 @@ class IncidentListCreateView(generics.ListCreateAPIView):
                     transaction.on_commit(
                         lambda incident_id=incident.pk:
                             dispatch_incident_notifications(incident_id),
+                        # Delivery happens inside the web service for the
+                        # Render free-plan deployment; Celery remains optional.
                         robust=True,
                     )
                 notify_new_incident(incident)

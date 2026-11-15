@@ -54,11 +54,23 @@ contacts.
 
 - backend/: Server-side application.
 - mobile/: Mobile application.
-- SalamaSphere_device/: Wearable firmware, hardware inventory, and device documentation.
+- SalamaSphere_device/: Active integrated wearable sketch, hardware inventory, and legacy device prototypes.
 - wearable/: Wearable firmware.
 - web/: Web interface resources.
 - docs/: Architecture and project documentation.
 - tests/: Test plans and automated tests.
+
+## Wearable firmware and BLE protocol
+
+For the integrated Flutter prototype, build
+`SalamaSphere_device/firmware/production/salamasphere_wearable.ino` (ESP32-S3,
+firmware v1.4.2, NimBLE-Arduino 2.5.1). Its service and characteristic UUIDs,
+SOS JSON event, and acknowledged WAV transfer protocol match the BLE service
+in the companion Flutter app. The older sketch under
+`SalamaSphere_device/firmware/ble_communication/` uses a different protocol
+and does not connect to the current Flutter BLE client; keep it as a legacy
+prototype. The Flutter repository also contains a byte-identical sketch copy;
+keep that mirror synchronized with this firmware file.
 
 ## Development Status
 
@@ -79,14 +91,17 @@ and notification permissions must be carefully designed.
 The prototype must not be considered a guaranteed
 emergency-response service.
 
-## Automatic wearable incident SMS
+## Automatic wearable incident notifications
 
 SOS and wearable incidents are sent to the admin assignment queue and create
 SMS and voice notifications for active trusted contacts who separately
-consented to each channel. After the incident commits, Celery queues delivery
-so provider latency does not delay the incident response. SMS includes a map
-link only for contacts who consented to SMS alerts. Voice calls do not speak
-the survivor's name or precise coordinates.
+consented to each channel. After the incident commits, the Django web service
+processes pending notifications directly, so the Render free plan does not
+require a separate Celery worker. This synchronous workaround can increase
+request latency; a durable background worker is preferred for production. SMS
+includes a map link only for contacts who consented to SMS alerts. Voice calls
+do not speak the survivor's name or precise coordinates. Audio evidence
+uploads do not trigger notification delivery again.
 
 The mobile app registers a wearable identifier to the signed-in user before
 syncing its SOS incident. Repeated registration by the same account reuses an
@@ -107,7 +122,13 @@ Set `SMS_PROVIDER=console` to simulate SMS locally, or select `twilio` or
 `esms_africa` to use an alternate configured provider. An accepted response
 confirms submission to the provider, not delivery to the handset.
 
-Run Redis, then run both background processes from `backend/`:
+Celery remains available for a future deployment with a background worker.
+For the Render web service, use `python -m gunicorn config.wsgi:application`
+as the start command. See [docs/RENDER_DEPLOYMENT.md](docs/RENDER_DEPLOYMENT.md)
+for free-plan behavior and safe recovery instructions.
+
+For a deployment with a paid worker, run Redis and both background processes
+from `backend/`:
 
 ```text
 celery -A config worker --loglevel=INFO

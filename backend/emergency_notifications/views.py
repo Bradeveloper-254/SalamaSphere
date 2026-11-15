@@ -36,9 +36,22 @@ class AfricasTalkingVoiceCallbackView(APIView):
 
         payload = request.data
         session_id = str(payload.get("sessionId") or "").strip()
-        if not session_id or len(session_id) > 150:
+        client_request_id = str(
+            payload.get("clientRequestId")
+            or payload.get("client_request_id")
+            or ""
+        ).strip()
+        if (
+            (not session_id and not client_request_id)
+            or len(session_id) > 150
+            or len(client_request_id) > 150
+        ):
             return Response(
-                {"detail": "A valid call sessionId is required."},
+                {
+                    "detail": (
+                        "A valid call sessionId or clientRequestId is required."
+                    )
+                },
                 status=400,
             )
 
@@ -69,7 +82,7 @@ class AfricasTalkingVoiceCallbackView(APIView):
                 "canceled",
             }
         ):
-            event_status = "answered"
+            event_status = event_status or "active"
         elif not event_status and active in {"0", "false", "no", "inactive"}:
             event_status = "completed"
         if not event_status:
@@ -82,6 +95,7 @@ class AfricasTalkingVoiceCallbackView(APIView):
             notification = update_voice_call_from_callback(
                 session_id,
                 event_status,
+                client_request_id=client_request_id,
             )
         except ValueError as error:
             return Response({"detail": str(error)}, status=400)
@@ -92,15 +106,8 @@ class AfricasTalkingVoiceCallbackView(APIView):
             )
 
         if (
-            notification.status == EmergencyNotification.Status.ANSWERED
-            and (
-                normalized_status in {
-                    "answered",
-                    "active",
-                    "in progress",
-                }
-                or active in {"1", "true", "yes", "active"}
-            )
+            active in {"1", "true", "yes", "active"}
+            or normalized_status in {"bridged", "answered"}
         ):
             announcement = escape(
                 generate_emergency_voice_announcement(

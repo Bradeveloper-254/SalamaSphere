@@ -90,35 +90,38 @@ class MobileSasaProvider:
                     and data.get("status") is True
                     and data.get("responseCode") == "0200"
                 )
+                response_code = str(data.get("responseCode") or "unknown")
 
                 return SMSResult(
                     accepted=accepted,
                     provider_message_id=str(data.get("messageId", "")),
-                    provider_status=str(data.get("responseCode", "")),
-                    error="" if accepted else str(data.get("message", "Rejected")),
+                    provider_status=response_code,
+                    error=(
+                        ""
+                        if accepted
+                        else f"Mobile Sasa rejected the SMS (code {response_code})."
+                    ),
                 )
 
         except HTTPError as error:
-            details = error.read().decode("utf-8", errors="replace")
             return SMSResult(
                 accepted=False,
                 provider_status=str(error.code),
-                error=details[:500],
+                error=f"Mobile Sasa returned HTTP {error.code}.",
             )
 
         except (URLError, TimeoutError, OSError) as error:
-            return SMSResult(
-                accepted=False,
-                provider_status="connection_error",
-                error=str(error)[:500],
-            )
+            # The provider may have accepted the request before the response
+            # was lost. Let the service persist UNKNOWN and suppress retries.
+            raise RuntimeError(
+                "Mobile Sasa request outcome is unknown."
+            ) from error
 
-        except (ValueError, json.JSONDecodeError) as error:
-            return SMSResult(
-                accepted=False,
-                provider_status="invalid_response",
-                error=str(error)[:500],
-            )
+        except (UnicodeDecodeError, ValueError) as error:
+            raise RuntimeError(
+                "Mobile Sasa returned an unreadable response; "
+                "the request outcome is unknown."
+            ) from error
 
 class ESMSAfricaProvider:
     """

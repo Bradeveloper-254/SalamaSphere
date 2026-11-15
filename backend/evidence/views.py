@@ -16,7 +16,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 
-from backend.emergency_notifications.dispatcher import dispatch_incident_notifications
 from dashboard.audit import record_incident_audit
 from dashboard.models import IncidentAuditEvent
 
@@ -231,20 +230,6 @@ class EvidenceUploadView(APIView):
                 "successfully and attached to your incident."
             ),
         )
-
-        if (
-            evidence.evidence_type == Evidence.EvidenceType.AUDIO
-            and incident.emergency_notifications.filter(
-                status="pending",
-                channel="sms",
-            ).exists()
-        ):
-            transaction.on_commit(
-                lambda incident_id=incident.pk: (
-                    dispatch_incident_notifications(incident_id)
-                ),
-                robust=True,
-            )
 
         return Response(
             {

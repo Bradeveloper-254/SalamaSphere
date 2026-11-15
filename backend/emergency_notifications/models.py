@@ -55,6 +55,14 @@ class EmergencyNotification(models.Model):
         blank=True,
     )
 
+    # Saved before starting the provider request so an early callback has a
+    # stable correlation key independent of the provider session ID.
+    provider_request_id = models.CharField(
+        max_length=150,
+        blank=True,
+        db_index=True,
+    )
+
     provider_status = models.CharField(
         max_length=50,
         blank=True,

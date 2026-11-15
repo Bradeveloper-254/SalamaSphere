@@ -24,15 +24,9 @@ def generate_emergency_voice_announcement(incident, contact=None):
     if settings.AT_VOICE_TEST_ANNOUNCEMENT:
         return (
             "Hello. This is a test automated voice call from SalamaSphere. "
-            "The developer DevNUX's Solutions, Junior Developer Bradley "
-            "Minyata, is currently testing the automated emergency "
-            "notification system to see if it is working and can help real "
-            "users. No emergency has been triggered. This is not a real "
-            "emergency. Thank you very much for accepting the call. Kindly "
-            "let him know that his voice-call emergency notification system "
-            "is working and that he can now move on to other tasks. Please "
-            "check your SMS for the location where the SOS event was created. "
-            "Thank you for your time."
+            "The SalamaSphere team is testing the automated emergency "
+            "notification system. No emergency has been triggered. This is "
+            "not a real emergency. Thank you for your time."
         )
 
     announcement = (
@@ -69,6 +63,8 @@ def queue_voice_notifications(incident):
         user=incident.user,
         is_active=True,
         receive_voice_calls=True,
+        voice_consent_confirmed_at__isnull=False,
+        voice_consent_withdrawn_at__isnull=True,
     )
 
     queued = []
@@ -122,6 +118,8 @@ def process_voice_notification(notification_id, provider=None):
         if (
             not contact.is_active
             or not contact.receive_voice_calls
+            or contact.voice_consent_confirmed_at is None
+            or contact.voice_consent_withdrawn_at is not None
             or contact.user_id != notification.incident.user_id
         ):
             notification.status = EmergencyNotification.Status.FAILED
@@ -136,11 +134,13 @@ def process_voice_notification(notification_id, provider=None):
         notification.status = EmergencyNotification.Status.PROCESSING
         notification.attempt_count += 1
         notification.last_error = ""
+        notification.provider_request_id = str(notification.pk)
         notification.save(
             update_fields=[
                 "status",
                 "attempt_count",
                 "last_error",
+                "provider_request_id",
                 "updated_at",
             ]
         )
@@ -167,6 +167,8 @@ def process_voice_notification(notification_id, provider=None):
         EmergencyNotification.objects.filter(
             pk=claimed_id,
             status=EmergencyNotification.Status.PROCESSING,
+            provider_message_id="",
+            provider_status="",
         ).update(
             status=EmergencyNotification.Status.FAILED,
             provider_status="not_configured",
@@ -182,6 +184,8 @@ def process_voice_notification(notification_id, provider=None):
         EmergencyNotification.objects.filter(
             pk=claimed_id,
             status=EmergencyNotification.Status.PROCESSING,
+            provider_message_id="",
+            provider_status="",
         ).update(
             status=EmergencyNotification.Status.UNKNOWN,
             provider_status="unknown",
@@ -195,11 +199,17 @@ def process_voice_notification(notification_id, provider=None):
             pk=claimed_id
         )
         if result.provider_call_id:
-            notification.provider_message_id = result.provider_call_id
+            if not notification.provider_message_id:
+                notification.provider_message_id = result.provider_call_id
+            elif notification.provider_message_id != result.provider_call_id:
+                logger.error(
+                    "Africa's Talking session mismatch for notification %s",
+                    claimed_id,
+                )
         if notification.status in {
             EmergencyNotification.Status.PROCESSING,
             EmergencyNotification.Status.UNKNOWN,
-        }:
+        } and not notification.provider_status:
             notification.provider_status = result.provider_status
             if result.accepted:
                 notification.status = EmergencyNotification.Status.ACCEPTED
@@ -222,7 +232,11 @@ def process_voice_notification(notification_id, provider=None):
     return notification
 
 
-def update_voice_call_from_callback(session_id, event_status):
+def update_voice_call_from_callback(
+    session_id,
+    event_status,
+    client_request_id="",
+):
     """Apply a verified provider status callback to its voice notification."""
     status_text = (
         str(event_status or "")
@@ -235,17 +249,23 @@ def update_voice_call_from_callback(session_id, event_status):
     status_map = {
         "queued": EmergencyNotification.Status.ACCEPTED,
         "accepted": EmergencyNotification.Status.ACCEPTED,
+        "dialing": EmergencyNotification.Status.PROCESSING,
+        "dialling": EmergencyNotification.Status.PROCESSING,
         "ringing": EmergencyNotification.Status.RINGING,
+        "bridged": EmergencyNotification.Status.ANSWERED,
         "answered": EmergencyNotification.Status.ANSWERED,
-        "active": EmergencyNotification.Status.ANSWERED,
-        "in progress": EmergencyNotification.Status.ANSWERED,
+        "active": EmergencyNotification.Status.RINGING,
+        "in progress": EmergencyNotification.Status.RINGING,
         "completed": EmergencyNotification.Status.COMPLETED,
         "complete": EmergencyNotification.Status.COMPLETED,
         "ended": EmergencyNotification.Status.COMPLETED,
         "failed": EmergencyNotification.Status.FAILED,
         "busy": EmergencyNotification.Status.FAILED,
         "no answer": EmergencyNotification.Status.FAILED,
+        "not answered": EmergencyNotification.Status.FAILED,
+        "notanswered": EmergencyNotification.Status.FAILED,
         "noanswer": EmergencyNotification.Status.FAILED,
+        "expired": EmergencyNotification.Status.FAILED,
         "cancelled": EmergencyNotification.Status.FAILED,
         "canceled": EmergencyNotification.Status.FAILED,
     }
@@ -254,17 +274,28 @@ def update_voice_call_from_callback(session_id, event_status):
         raise ValueError("Unsupported Africa's Talking call status.")
 
     with transaction.atomic():
-        notification = (
-            EmergencyNotification.objects.select_for_update()
-            .select_related("incident", "recipient")
-            .filter(
-                channel="voice",
-                provider_message_id=session_id,
-            )
-            .first()
+        notifications = EmergencyNotification.objects.select_for_update().filter(
+            channel="voice",
         )
+        notification = None
+        if client_request_id:
+            notification = notifications.filter(
+                provider_request_id=client_request_id,
+            ).first()
+        elif session_id:
+            notification = notifications.filter(
+                provider_message_id=session_id,
+            ).first()
         if notification is None:
             return None
+        if (
+            session_id
+            and notification.provider_message_id
+            and notification.provider_message_id != session_id
+        ):
+            return None
+        if session_id and not notification.provider_message_id:
+            notification.provider_message_id = session_id
         progress = {
             EmergencyNotification.Status.PENDING: 0,
             EmergencyNotification.Status.PROCESSING: 1,
@@ -278,13 +309,15 @@ def update_voice_call_from_callback(session_id, event_status):
             EmergencyNotification.Status.COMPLETED,
             EmergencyNotification.Status.FAILED,
         }
-        if notification.status not in terminal_statuses and (
+        can_update_status = notification.status not in terminal_statuses and (
             new_status == EmergencyNotification.Status.FAILED
             or (
                 notification.status in progress
                 and progress[new_status] > progress[notification.status]
             )
-        ):
+            or new_status == notification.status
+        )
+        if can_update_status:
             notification.status = new_status
             notification.provider_status = status_text[:50]
             notification.last_error = (
@@ -292,13 +325,21 @@ def update_voice_call_from_callback(session_id, event_status):
                 if new_status == EmergencyNotification.Status.FAILED
                 else ""
             )
+        if session_id:
             notification.save(
                 update_fields=[
-                    "status",
-                    "provider_status",
-                    "last_error",
+                    "provider_message_id",
+                    *(
+                        ["status", "provider_status", "last_error"]
+                        if can_update_status
+                        else []
+                    ),
                     "updated_at",
                 ]
+            )
+        elif can_update_status:
+            notification.save(
+                update_fields=["status", "provider_status", "last_error", "updated_at"]
             )
         return notification
 

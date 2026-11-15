@@ -110,6 +110,7 @@ class AfricasTalkingVoiceProvider:
             "username": username,
             "from": caller_number,
             "to": phone_number,
+            "clientRequestId": notification_id,
         }).encode("utf-8")
         request = Request(
             f"{settings.AT_VOICE_BASE_URL.rstrip('/')}/call",

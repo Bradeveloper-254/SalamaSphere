@@ -307,10 +307,10 @@ class IncidentEvidenceApiTests(TestCase):
                     b"audio-data",
                 )
 
-    @patch("evidence.views.enqueue_incident_notifications.delay")
-    def test_audio_upload_automatically_triggers_pending_contact_sms(
+    @patch("emergency_notifications.dispatcher.dispatch_incident_notifications")
+    def test_audio_upload_does_not_retrigger_pending_notifications(
         self,
-        process_notifications,
+        dispatch_notifications,
     ):
         self.incident.source = Incident.IncidentSource.WEARABLE
         self.incident.is_sos = False
@@ -331,24 +331,23 @@ class IncidentEvidenceApiTests(TestCase):
             status=EmergencyNotification.Status.PENDING,
         )
 
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.client.post(
-                reverse(
-                    "incident-audio",
-                    kwargs={"incident_id": self.incident.id},
+        response = self.client.post(
+            reverse(
+                "incident-audio",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {
+                "file": SimpleUploadedFile(
+                    "incident.wav",
+                    b"audio-data",
+                    content_type="audio/wav",
                 ),
-                {
-                    "file": SimpleUploadedFile(
-                        "incident.wav",
-                        b"audio-data",
-                        content_type="audio/wav",
-                    ),
-                },
-                format="multipart",
-            )
+            },
+            format="multipart",
+        )
 
         self.assertEqual(response.status_code, 201, response.data)
-        process_notifications.assert_called_once_with(str(self.incident.id))
+        dispatch_notifications.assert_not_called()
 
     @override_settings(
         SALAMASPHERE_PUBLIC_BASE_URL="https://api.salama.example",
