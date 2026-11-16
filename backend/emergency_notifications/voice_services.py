@@ -260,6 +260,7 @@ def update_voice_call_from_callback(
         "complete": EmergencyNotification.Status.COMPLETED,
         "ended": EmergencyNotification.Status.COMPLETED,
         "failed": EmergencyNotification.Status.FAILED,
+        "aborted": EmergencyNotification.Status.FAILED,
         "busy": EmergencyNotification.Status.FAILED,
         "no answer": EmergencyNotification.Status.FAILED,
         "not answered": EmergencyNotification.Status.FAILED,

@@ -70,7 +70,7 @@ class AfricasTalkingVoiceControlView(AfricasTalkingCallbackBase):
             announcement = escape(announcement)
             return HttpResponse(
                 '<?xml version="1.0" encoding="UTF-8"?>'
-                f"<Response><Say>{announcement}</Say><Hangup/></Response>",
+                f"<Response><Say>{announcement}</Say></Response>",
                 content_type="application/xml; charset=utf-8",
             )
         return HttpResponse("OK", content_type="text/plain; charset=utf-8")
