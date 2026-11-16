@@ -734,7 +734,11 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         AT_VOICE_BASE_URL="https://voice.africastalking.com",
         AT_VOICE_CALLBACK_URL=(
             "https://api.example.test/api/emergency-notifications/"
-            "voice/callback/?token=callback-secret"
+            "voice/callback/control/?token=callback-secret"
+        ),
+        AT_VOICE_EVENTS_URL=(
+            "https://api.example.test/api/emergency-notifications/"
+            "voice/callback/events/?token=callback-secret"
         ),
         AT_VOICE_CALLBACK_TOKEN="callback-secret",
     )
@@ -744,6 +748,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         urlopen,
     ):
         response = Mock()
+        response.status = 200
         response.read.return_value = (
             b'{"entries":[{"status":"Queued","sessionId":"AT-SESSION-1"}],'
             b'"errorMessage":""}'
@@ -775,7 +780,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertEqual(payload["clientRequestId"], ["notification-1"])
 
     @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
-    def test_voice_callback_tracks_progress_and_returns_private_announcement(
+    def test_voice_events_track_call_progress_and_ignore_old_events(
         self,
     ):
         notification = EmergencyNotification.objects.create(
@@ -786,10 +791,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             provider_message_id="AT-SESSION-2",
         )
         client = APIClient()
-        endpoint = (
-            reverse("africas-talking-voice-callback")
-            + "?token=callback-secret"
-        )
+        endpoint = reverse("africas-talking-voice-events") + "?token=callback-secret"
 
         ringing = client.post(
             endpoint,
@@ -808,7 +810,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             },
         )
         self.assertEqual(answered.status_code, 200)
-        self.assertIn(b"<Say>", answered.content)
+        self.assertEqual(answered.content, b"OK")
         notification.refresh_from_db()
         self.assertEqual(notification.status, EmergencyNotification.Status.ANSWERED)
 
@@ -845,7 +847,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         )
         client = APIClient()
         response = client.post(
-            reverse("africas-talking-voice-callback")
+            reverse("africas-talking-voice-events")
             + "?token=callback-secret",
             {
                 "sessionId": "AT-EARLY-1",
@@ -861,7 +863,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         self.assertEqual(notification.status, EmergencyNotification.Status.PROCESSING)
 
     @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
-    def test_active_callback_does_not_mean_answered(self):
+    def test_call_control_returns_xml_without_session_lookup(self):
         notification = EmergencyNotification.objects.create(
             incident=self.incident,
             recipient=self.contact,
@@ -870,26 +872,21 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             provider_request_id="request-active-1",
         )
         response = APIClient().post(
-            reverse("africas-talking-voice-callback")
+            reverse("africas-talking-voice-control")
             + "?token=callback-secret",
-            {
-                "sessionId": "AT-ACTIVE-1",
-                "clientRequestId": "request-active-1",
-                "status": "Active",
-                "isActive": "1",
-            },
+            {"sessionId": "AT-ACTIVE-1", "isActive": "1"},
         )
 
         self.assertEqual(response.status_code, 200)
-        notification.refresh_from_db()
-        self.assertEqual(notification.status, EmergencyNotification.Status.RINGING)
-        self.assertNotEqual(notification.status, EmergencyNotification.Status.ANSWERED)
         self.assertIn(b"<Say>", response.content)
+        self.assertIn(b"<Hangup/>", response.content)
+        notification.refresh_from_db()
+        self.assertEqual(notification.status, EmergencyNotification.Status.ACCEPTED)
 
     @override_settings(AT_VOICE_CALLBACK_TOKEN="callback-secret")
-    def test_voice_callback_rejects_bad_token_and_unknown_session(self):
+    def test_voice_event_rejects_bad_token_and_acknowledges_unmatched_event(self):
         client = APIClient()
-        endpoint = reverse("africas-talking-voice-callback")
+        endpoint = reverse("africas-talking-voice-events")
 
         unauthorized = client.post(
             endpoint + "?token=wrong",
@@ -901,7 +898,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             endpoint + "?token=callback-secret",
             {"sessionId": "AT-UNKNOWN", "status": "Answered"},
         )
-        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing.status_code, 200)
 
     def test_provider_terminal_statuses_fail_the_correlated_call(self):
         notification = EmergencyNotification.objects.create(

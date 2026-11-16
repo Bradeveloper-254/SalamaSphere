@@ -1,11 +1,19 @@
 from django.urls import path
 
-from .views import AfricasTalkingVoiceCallbackView
+from .views import (
+    AfricasTalkingVoiceControlView,
+    AfricasTalkingVoiceEventsView,
+)
 
 urlpatterns = [
     path(
-        "voice/callback/",
-        AfricasTalkingVoiceCallbackView.as_view(),
-        name="africas-talking-voice-callback",
+        "voice/callback/control/",
+        AfricasTalkingVoiceControlView.as_view(),
+        name="africas-talking-voice-control",
+    ),
+    path(
+        "voice/callback/events/",
+        AfricasTalkingVoiceEventsView.as_view(),
+        name="africas-talking-voice-events",
     ),
 ]

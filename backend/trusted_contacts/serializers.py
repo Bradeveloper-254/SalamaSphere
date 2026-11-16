@@ -85,6 +85,18 @@ class TrustedContactSerializer(serializers.ModelSerializer):
                     "Confirm that the contact agreed to receive SOS alerts."
                 )
             })
+        if (
+            self.instance is not None
+            and receive_sos_alerts
+            and attrs.get("receive_sos_alerts") is True
+            and not self.instance.receive_sos_alerts
+            and attrs.get("confirm_sos_consent") is not True
+        ):
+            raise serializers.ValidationError({
+                "confirm_sos_consent": (
+                    "Confirm that the contact agreed to receive SOS alerts."
+                )
+            })
 
         receive_voice_calls = attrs.get(
             "receive_voice_calls",
@@ -107,7 +119,7 @@ class TrustedContactSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         consent_confirmed = validated_data.pop(
             "confirm_sos_consent",
-            False,
+            None,
         )
         voice_consent_confirmed = validated_data.pop(
             "confirm_voice_consent",
@@ -128,10 +140,11 @@ class TrustedContactSerializer(serializers.ModelSerializer):
         for field, value in validated_data.items():
             setattr(contact, field, value)
         contact.is_active = True
-        contact.consent_confirmed = consent_confirmed
-        contact.consent_confirmed_at = (
-            timezone.now() if consent_confirmed else None
-        )
+        if consent_confirmed is not None:
+            contact.consent_confirmed = consent_confirmed
+            contact.consent_confirmed_at = (
+                timezone.now() if consent_confirmed else None
+            )
         if contact.receive_voice_calls and voice_consent_confirmed:
             contact.voice_consent_confirmed_at = timezone.now()
             contact.voice_consent_withdrawn_at = None

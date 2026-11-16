@@ -1,11 +1,13 @@
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from django.conf import settings
 
@@ -87,6 +89,7 @@ class AfricasTalkingVoiceProvider:
         api_key = settings.AT_VOICE_API_KEY
         caller_number = settings.AT_VOICE_NUMBER
         callback_url = settings.AT_VOICE_CALLBACK_URL
+        events_url = settings.AT_VOICE_EVENTS_URL
         callback_token = settings.AT_VOICE_CALLBACK_TOKEN
         if not all((username, api_key, caller_number)):
             raise VoiceProviderConfigurationError(
@@ -94,6 +97,7 @@ class AfricasTalkingVoiceProvider:
                 "must be configured."
             )
         callback = urlparse(callback_url)
+        events = urlparse(events_url)
         if (
             callback.scheme != "https"
             or not callback.netloc
@@ -104,6 +108,26 @@ class AfricasTalkingVoiceProvider:
             raise VoiceProviderConfigurationError(
                 "Configure an HTTPS Africa's Talking callback URL with "
                 "the configured token query parameter."
+            )
+        if (
+            events.scheme != "https"
+            or not events.netloc
+            or callback_token not in parse_qs(events.query).get("token", [])
+        ):
+            raise VoiceProviderConfigurationError(
+                "Configure an HTTPS Africa's Talking events URL with the "
+                "configured token query parameter."
+            )
+        if not re.fullmatch(r"\+[1-9][0-9]{7,14}", phone_number):
+            return VoiceCallResult(
+                accepted=False,
+                provider_status="invalid_destination",
+                error="Destination must be an international E.164 number.",
+            )
+        if not re.fullmatch(r"\+[1-9][0-9]{7,14}", caller_number):
+            raise VoiceProviderConfigurationError(
+                "Africa's Talking voice number must be an international "
+                "E.164 number."
             )
 
         payload = urlencode({
@@ -122,8 +146,24 @@ class AfricasTalkingVoiceProvider:
             },
             method="POST",
         )
-        with urlopen(request, timeout=10) as response:
-            body = response.read()
+        try:
+            with urlopen(request, timeout=10) as response:
+                body = response.read(65537)
+                http_status = response.status
+        except HTTPError as error:
+            logger.warning(
+                "Africa's Talking rejected voice request notification=%s http_status=%s",
+                notification_id,
+                error.code,
+            )
+            return VoiceCallResult(
+                accepted=False,
+                provider_status="rejected",
+                error=f"Africa's Talking rejected the request (HTTP {error.code}).",
+            )
+
+        if len(body) > 65536:
+            raise RuntimeError("Africa's Talking response was too large.")
 
         try:
             decoded = json.loads(body)
@@ -132,9 +172,13 @@ class AfricasTalkingVoiceProvider:
                 "Africa's Talking returned an invalid voice API response."
             ) from error
 
+        if not isinstance(decoded, dict):
+            raise RuntimeError("Africa's Talking returned an invalid voice API response.")
         entries = decoded.get("entries")
         entry = entries[0] if isinstance(entries, list) and entries else {}
-        error = str(decoded.get("errorMessage") or "")
+        if not isinstance(entry, dict):
+            entry = {}
+        error = str(decoded.get("errorMessage") or "")[:300]
         if not entry and not error:
             raise RuntimeError(
                 "Africa's Talking returned no call result; outcome is unknown."
@@ -143,11 +187,7 @@ class AfricasTalkingVoiceProvider:
         provider_call_id = str(
             entry.get("sessionId") or entry.get("session_id") or ""
         )
-        accepted = provider_status.strip().lower() in {
-            "queued",
-            "accepted",
-            "success",
-        }
+        accepted = provider_status.strip().lower() in {"queued", "accepted"}
         if accepted and not provider_call_id:
             logger.warning(
                 "Africa's Talking accepted voice notification %s without "

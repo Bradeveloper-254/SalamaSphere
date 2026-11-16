@@ -1,126 +1,115 @@
 import hmac
+import logging
 from xml.sax.saxutils import escape
 
 from django.conf import settings
 from django.http import HttpResponse
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import EmergencyNotification
-from .voice_services import (
-    generate_emergency_voice_announcement,
-    update_voice_call_from_callback,
-)
+from .voice_services import update_voice_call_from_callback
+
+logger = logging.getLogger(__name__)
+MAX_CALLBACK_BYTES = 16 * 1024
 
 
-class AfricasTalkingVoiceCallbackView(APIView):
+class AfricasTalkingCallbackBase(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    parser_classes = [FormParser, JSONParser, MultiPartParser]
+    parser_classes = [FormParser, JSONParser]
+
+    def callback_error(self, request):
+        try:
+            content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Malformed callback length."}, status=400)
+        if content_length > MAX_CALLBACK_BYTES or len(request.body) > MAX_CALLBACK_BYTES:
+            return Response({"detail": "Callback payload is too large."}, status=413)
+        expected = settings.AT_VOICE_CALLBACK_TOKEN
+        supplied = request.query_params.get("token", "")
+        if not expected:
+            return Response({"detail": "Voice callbacks are not configured."}, status=503)
+        if not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
+            logger.warning("Africa's Talking callback rejected: invalid token")
+            return Response({"detail": "Invalid callback token."}, status=403)
+        return None
+
+
+class AfricasTalkingVoiceControlView(AfricasTalkingCallbackBase):
+    """Stateless VoiceXML control endpoint; safe before session persistence."""
 
     def post(self, request):
-        configured_token = settings.AT_VOICE_CALLBACK_TOKEN
-        supplied_token = request.query_params.get("token", "")
-        if not configured_token:
-            return Response(
-                {"detail": "Voice callbacks are not configured."},
-                status=503,
+        error = self.callback_error(request)
+        if error:
+            return error
+        payload = request.data
+        session_id = str(payload.get("sessionId") or "")[:150]
+        active = str(payload.get("isActive", "")).strip().lower()
+        logger.info(
+            "Africa's Talking call-control callback received session_id=%s active=%s",
+            session_id or "unavailable",
+            active or "unavailable",
+        )
+        # AT calls this endpoint when a call becomes active and expects
+        # VoiceXML. No database lookup is safe here: callbacks may race the
+        # API response that persists sessionId.
+        if active in {"1", "true", "yes", "active"}:
+            announcement = (
+                "Hello. This is a test automated voice call from "
+                "SalamaSphere. The SalamaSphere team is testing the "
+                "automated emergency notification system. No emergency "
+                "has been triggered. This is not a real emergency. "
+                "Thank you for your time."
+                if settings.AT_VOICE_TEST_ANNOUNCEMENT
+                else "This is an automated SalamaSphere emergency alert. "
+                "A person who listed you as a trusted contact needs help. "
+                "Please contact them as soon as possible."
             )
-        if not hmac.compare_digest(
-            supplied_token.encode("utf-8"),
-            configured_token.encode("utf-8"),
-        ):
-            return Response({"detail": "Invalid callback token."}, status=403)
+            announcement = escape(announcement)
+            return HttpResponse(
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                f"<Response><Say>{announcement}</Say><Hangup/></Response>",
+                content_type="application/xml; charset=utf-8",
+            )
+        return HttpResponse("OK", content_type="text/plain; charset=utf-8")
 
+
+class AfricasTalkingVoiceEventsView(AfricasTalkingCallbackBase):
+    """Status events endpoint; events are acknowledged even when unmatched."""
+
+    def post(self, request):
+        error = self.callback_error(request)
+        if error:
+            return error
         payload = request.data
         session_id = str(payload.get("sessionId") or "").strip()
-        client_request_id = str(
-            payload.get("clientRequestId")
-            or payload.get("client_request_id")
-            or ""
-        ).strip()
+        client_request_id = str(payload.get("clientRequestId") or "").strip()
+        event_status = str(payload.get("status") or "").strip()
         if (
-            (not session_id and not client_request_id)
-            or len(session_id) > 150
+            len(session_id) > 150
             or len(client_request_id) > 150
+            or len(event_status) > 50
+            or not event_status
+            or not (session_id or client_request_id)
         ):
-            return Response(
-                {
-                    "detail": (
-                        "A valid call sessionId or clientRequestId is required."
-                    )
-                },
-                status=400,
-            )
-
-        event_status = (
-            payload.get("status")
-            or payload.get("callStatus")
-            or payload.get("call_status")
-        )
-        active = str(payload.get("isActive", "")).strip().lower()
-        normalized_status = (
-            str(event_status or "")
-            .strip()
-            .lower()
-            .replace("_", " ")
-            .replace("-", " ")
-        )
-        if (
-            active in {"1", "true", "yes", "active"}
-            and normalized_status
-            not in {
-                "completed",
-                "complete",
-                "ended",
-                "failed",
-                "busy",
-                "no answer",
-                "cancelled",
-                "canceled",
-            }
-        ):
-            event_status = event_status or "active"
-        elif not event_status and active in {"0", "false", "no", "inactive"}:
-            event_status = "completed"
-        if not event_status:
-            return Response(
-                {"detail": "A call status or isActive value is required."},
-                status=400,
-            )
-
+            return Response({"detail": "Malformed voice event."}, status=400)
         try:
             notification = update_voice_call_from_callback(
                 session_id,
                 event_status,
                 client_request_id=client_request_id,
             )
-        except ValueError as error:
-            return Response({"detail": str(error)}, status=400)
-        if notification is None:
-            return Response(
-                {"detail": "No voice call matches this provider session."},
-                status=404,
-            )
-
-        if (
-            active in {"1", "true", "yes", "active"}
-            or normalized_status in {"bridged", "answered"}
-        ):
-            announcement = escape(
-                generate_emergency_voice_announcement(
-                    notification.incident,
-                    notification.recipient,
-                )
-            )
-            return HttpResponse(
-                (
-                    '<?xml version="1.0" encoding="UTF-8"?>'
-                    f"<Response><Say>{announcement}</Say><Hangup/></Response>"
-                ),
-                content_type="application/xml",
-            )
-
-        return HttpResponse("OK", content_type="text/plain")
+        except ValueError:
+            logger.warning("Africa's Talking voice event has unknown status")
+            return Response({"detail": "Unsupported call status."}, status=400)
+        logger.info(
+            "Africa's Talking call event correlated=%s notification_id=%s session_id=%s status=%s",
+            bool(notification),
+            str(notification.pk) if notification else "unmatched",
+            session_id or "unavailable",
+            event_status.lower()[:50],
+        )
+        # Acknowledge unmatched events so provider retries do not create noise.
+        return HttpResponse("OK", content_type="text/plain; charset=utf-8")

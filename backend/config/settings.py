@@ -284,6 +284,10 @@ AT_VOICE_CALLBACK_URL = env(
     "AT_VOICE_CALLBACK_URL",
     default="",
 )
+AT_VOICE_EVENTS_URL = env(
+    "AT_VOICE_EVENTS_URL",
+    default="",
+)
 AT_VOICE_CALLBACK_TOKEN = env(
     "AT_VOICE_CALLBACK_TOKEN",
     default="",

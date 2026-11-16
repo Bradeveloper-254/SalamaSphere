@@ -145,6 +145,55 @@ class TrustedContactApiTests(TestCase):
             ],
         )
 
+    def test_existing_contact_preferences_update_without_recreation(self):
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Safety contact",
+            phone_number="+254700000000",
+            receive_sos_alerts=True,
+            consent_confirmed=True,
+        )
+        endpoint = reverse("trusted-contact-detail", kwargs={"pk": contact.pk})
+        response = self.client.patch(
+            endpoint,
+            {"receive_sos_alerts": False, "receive_voice_calls": True,
+             "confirm_voice_consent": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(TrustedContact.objects.filter(user=self.user).count(), 1)
+        contact.refresh_from_db()
+        self.assertFalse(contact.receive_sos_alerts)
+        self.assertTrue(contact.receive_voice_calls)
+        self.assertTrue(contact.consent_confirmed)
+
+    def test_reenabling_voice_after_withdrawal_requires_new_consent(self):
+        contact = TrustedContact.objects.create(
+            user=self.user,
+            name="Safety contact",
+            phone_number="+254700000000",
+            receive_voice_calls=True,
+            voice_consent_confirmed_at=timezone.now(),
+        )
+        endpoint = reverse("trusted-contact-detail", kwargs={"pk": contact.pk})
+        self.client.patch(endpoint, {"receive_voice_calls": False}, format="json")
+        denied = self.client.patch(
+            endpoint, {"receive_voice_calls": True}, format="json"
+        )
+        self.assertEqual(denied.status_code, 400)
+        allowed = self.client.patch(
+            endpoint,
+            {"receive_voice_calls": True, "confirm_voice_consent": True},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.data)
+        contact.refresh_from_db()
+        self.assertIsNone(contact.voice_consent_withdrawn_at)
+        self.assertEqual(
+            list(contact.voice_consent_events.values_list("action", flat=True)),
+            ["withdrawn", "granted"],
+        )
+
     def test_deleting_contact_with_delivery_history_deactivates_it(self):
         created = self.client.post(
             self.endpoint,
