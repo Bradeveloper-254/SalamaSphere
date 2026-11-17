@@ -64,6 +64,8 @@ class Evidence(models.Model):
         blank=True,
     )
 
+    sha256_hash_type = models.CharField(max_length=32, default="plaintext")
+
     encryption_version = models.PositiveSmallIntegerField(
         default=0,
     )
@@ -98,3 +100,72 @@ class Evidence(models.Model):
 
     def __str__(self):
         return f"{self.evidence_type}: {self.original_filename}"
+
+
+class EvidenceAccessAudit(models.Model):
+    class Action(models.TextChoices):
+        VIEWED = "viewed", "Evidence viewed"
+        AUDIO_ACCESSED = "audio_accessed", "Audio accessed"
+        DOWNLOADED = "downloaded", "Evidence downloaded"
+        VERIFIED = "verified", "Evidence verification performed"
+        ACCESS_DENIED = "access_denied", "Access denied"
+
+    class Outcome(models.TextChoices):
+        SUCCESS = "success", "Success"
+        DENIED = "denied", "Denied"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    incident = models.ForeignKey("incidents.Incident", on_delete=models.PROTECT)
+    evidence = models.ForeignKey(
+        Evidence, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="access_audit_events",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="evidence_access_audit_events",
+    )
+    action = models.CharField(max_length=24, choices=Action.choices)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    request_id = models.CharField(max_length=128, blank=True)
+
+    class Meta:
+        ordering = ["-occurred_at"]
+
+
+class EvidenceTranscript(models.Model):
+    class Status(models.TextChoices):
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class LanguageSource(models.TextChoices):
+        AUTOMATIC = "automatic", "Automatic detection"
+        USER_SELECTED = "user_selected", "User selected"
+
+    evidence = models.ForeignKey(
+        Evidence, on_delete=models.PROTECT, related_name="transcripts"
+    )
+    incident = models.ForeignKey(
+        "incidents.Incident", on_delete=models.PROTECT,
+        related_name="evidence_transcripts",
+    )
+    language = models.CharField(max_length=16)
+    language_source = models.CharField(max_length=20, choices=LanguageSource.choices)
+    transcript = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices)
+    error_code = models.CharField(max_length=64, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    human_review_required = models.BooleanField(default=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.PROTECT, related_name="reviewed_evidence_transcripts",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="requested_evidence_transcripts",
+    )
+
+    class Meta:
+        ordering = ["-processed_at"]

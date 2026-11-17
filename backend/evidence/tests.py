@@ -22,7 +22,8 @@ from incidents.models import IncidentAssignment
 from dashboard.models import IncidentAuditEvent
 from trusted_contacts.models import TrustedContact
 
-from .models import Evidence
+from .models import Evidence, EvidenceAccessAudit, EvidenceTranscript
+from .admin import EvidenceAccessAuditAdmin
 
 
 User = get_user_model()
@@ -69,6 +70,8 @@ class IncidentEvidenceApiTests(TestCase):
                     content_type="video/webm",
                 ),
                 "share_with": "authorities",
+                "sha256_hash": hashlib.sha256(b"video-data").hexdigest(),
+                "sha256_hash_type": "plaintext",
             },
             format="multipart",
         )
@@ -94,6 +97,11 @@ class IncidentEvidenceApiTests(TestCase):
         listing = self.client.get(self.upload_url)
         self.assertEqual(listing.status_code, 200)
         self.assertEqual(listing.data[0]["id"], str(evidence.id))
+        audit = EvidenceAccessAudit.objects.get(
+            evidence=evidence, action=EvidenceAccessAudit.Action.VIEWED
+        )
+        self.assertEqual(audit.user_id, self.user.pk)
+        self.assertEqual(audit.incident_id, self.incident.pk)
 
         file_response = self.client.get(
             reverse(
@@ -103,6 +111,10 @@ class IncidentEvidenceApiTests(TestCase):
         )
         self.assertEqual(file_response.status_code, 200)
         self.assertEqual(b"".join(file_response.streaming_content), b"video-data")
+        self.assertTrue(EvidenceAccessAudit.objects.filter(
+            evidence=evidence, action=EvidenceAccessAudit.Action.DOWNLOADED,
+            outcome=EvidenceAccessAudit.Outcome.SUCCESS,
+        ).exists())
 
         verification = self.client.get(
             reverse(
@@ -112,6 +124,170 @@ class IncidentEvidenceApiTests(TestCase):
         )
         self.assertEqual(verification.status_code, 200)
         self.assertTrue(verification.data["verified"])
+        self.assertTrue(EvidenceAccessAudit.objects.filter(
+            evidence=evidence, action=EvidenceAccessAudit.Action.VERIFIED,
+        ).exists())
+
+    def test_evidence_access_denial_is_audited(self):
+        upload = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("clip.mp4", b"clip", content_type="video/mp4"),
+                "sha256_hash": hashlib.sha256(b"clip").hexdigest(),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            }, format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201)
+        evidence = Evidence.objects.get()
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.get(reverse("evidence-file", kwargs={"evidence_id": evidence.id}))
+        self.assertEqual(response.status_code, 404)
+        audit = EvidenceAccessAudit.objects.get(
+            evidence=evidence, action=EvidenceAccessAudit.Action.ACCESS_DENIED,
+        )
+        self.assertEqual(audit.outcome, EvidenceAccessAudit.Outcome.DENIED)
+        self.assertEqual(audit.user_id, self.other_user.pk)
+
+    def test_audit_admin_records_are_read_only(self):
+        model_admin = EvidenceAccessAuditAdmin(EvidenceAccessAudit, None)
+        self.assertFalse(model_admin.has_add_permission(None))
+        self.assertFalse(model_admin.has_change_permission(None))
+        self.assertFalse(model_admin.has_delete_permission(None))
+
+    @patch("evidence.views.OpenAITranscriptionProvider.transcribe")
+    def test_authorized_audio_transcription_stores_separate_reviewable_text(
+        self, transcribe,
+    ):
+        transcribe.return_value = ("Habari, I need help.", "sw")
+        uploaded = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("audio.wav", b"audio-bytes", content_type="audio/wav"),
+                "sha256_hash": hashlib.sha256(b"audio-bytes").hexdigest(),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            }, format="multipart",
+        )
+        evidence = Evidence.objects.get()
+        original_storage_key = evidence.storage_key
+        response = self.client.post(
+            reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk}),
+            {"language": "auto"}, format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        transcript = EvidenceTranscript.objects.get()
+        self.assertEqual(transcript.transcript, "Habari, I need help.")
+        self.assertEqual(transcript.language_source, "automatic")
+        self.assertTrue(transcript.human_review_required)
+        self.assertEqual(transcript.incident_id, evidence.incident_id)
+        evidence.refresh_from_db()
+        self.assertEqual(evidence.storage_key, original_storage_key)
+        self.assertEqual(evidence.sha256_hash, hashlib.sha256(b"audio-bytes").hexdigest())
+        transcribe.assert_called_once()
+
+    @patch("evidence.views.OpenAITranscriptionProvider.transcribe")
+    def test_transcription_denies_another_users_evidence(self, transcribe):
+        self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+                "sha256_hash": hashlib.sha256(b"audio").hexdigest(),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            }, format="multipart",
+        )
+        evidence = Evidence.objects.get()
+        self.client.force_authenticate(user=self.other_user)
+        response = self.client.post(
+            reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk}),
+            {"language": "en"}, format="json",
+        )
+        self.assertEqual(response.status_code, 404)
+        transcribe.assert_not_called()
+        self.assertTrue(EvidenceAccessAudit.objects.filter(
+            evidence=evidence, action=EvidenceAccessAudit.Action.ACCESS_DENIED,
+        ).exists())
+
+    @patch("evidence.views.OpenAITranscriptionProvider.transcribe")
+    def test_recognition_failure_returns_clear_error_and_records_failure(self, transcribe):
+        self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+                "sha256_hash": hashlib.sha256(b"audio").hexdigest(),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            }, format="multipart",
+        )
+        from .transcription import TranscriptionError
+        transcribe.side_effect = TranscriptionError("no_speech_recognized")
+        response = self.client.post(
+            reverse("evidence-transcribe", kwargs={"evidence_id": Evidence.objects.get().pk}),
+            {"language": "en"}, format="json",
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("could not process", response.data["error"])
+        self.assertEqual(EvidenceTranscript.objects.get().status, "failed")
+
+    def test_upload_rejects_missing_malformed_or_mismatched_hash(self):
+        for supplied in (None, "bad-hash", "0" * 64):
+            data = {
+                "file": SimpleUploadedFile(
+                    "audio.wav", b"original-audio", content_type="audio/wav"
+                ),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            }
+            if supplied is not None:
+                data["sha256_hash"] = supplied
+            response = self.client.post(self.upload_url, data, format="multipart")
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(Evidence.objects.count(), 0)
+
+    def test_expected_hash_is_preserved_on_verification(self):
+        expected = hashlib.sha256(b"video-data").hexdigest()
+        response = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("recording.mp4", b"video-data", content_type="video/mp4"),
+                "sha256_hash": expected,
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        evidence = Evidence.objects.get()
+        self.client.get(reverse("evidence-verify", kwargs={"incident_id": self.incident.id}))
+        evidence.refresh_from_db()
+        self.assertEqual(evidence.sha256_hash, expected)
+
+    def test_modified_upload_bytes_fail_against_original_hash(self):
+        response = self.client.post(
+            self.upload_url,
+            {
+                "file": SimpleUploadedFile("recording.wav", b"modified", content_type="audio/wav"),
+                "sha256_hash": hashlib.sha256(b"original").hexdigest(),
+                "sha256_hash_type": "plaintext",
+                "share_with": "authorities",
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["verification_status"], "VERIFICATION_FAILED")
+
+    def test_verification_rejects_evidence_attached_to_another_incident(self):
+        other_incident = Incident.objects.create(
+            user=self.user,
+            source=Incident.IncidentSource.MOBILE,
+            description="Different incident",
+            occurred_at=timezone.now(),
+        )
+        response = self.client.post(
+            reverse("evidence-verify", kwargs={"incident_id": other_incident.id})
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_tampered_encrypted_file_is_not_returned(self):
         response = self.client.post(
@@ -123,6 +299,8 @@ class IncidentEvidenceApiTests(TestCase):
                     content_type="video/mp4",
                 ),
                 "share_with": "authorities",
+                "sha256_hash": hashlib.sha256(b"video-data").hexdigest(),
+                "sha256_hash_type": "plaintext",
             },
             format="multipart",
         )

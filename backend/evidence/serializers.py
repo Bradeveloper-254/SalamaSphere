@@ -1,10 +1,11 @@
 from pathlib import Path
+import re
 
 from rest_framework import serializers
 
 from trusted_contacts.models import TrustedContact
 
-from .models import Evidence
+from .models import Evidence, EvidenceTranscript
 
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MiB
@@ -41,6 +42,14 @@ class EvidenceUploadSerializer(serializers.Serializer):
     recorded_at = serializers.DateTimeField(
         required=False,
         allow_null=True,
+    )
+    sha256_hash = serializers.RegexField(
+        regex=r"^[0-9a-fA-F]{64}$",
+        required=True,
+        error_messages={"invalid": "Provide a valid 64-character SHA-256 hash."},
+    )
+    sha256_hash_type = serializers.ChoiceField(
+        choices=("plaintext",), required=True,
     )
     share_with = serializers.ChoiceField(
         choices=("authorities", "trusted_contacts", "both"),
@@ -141,3 +150,10 @@ class EvidenceUploadSerializer(serializers.Serializer):
             })
 
         return attrs
+
+
+class EvidenceTranscriptionSerializer(serializers.Serializer):
+    language = serializers.ChoiceField(
+        choices=(("auto", "Automatic"), ("sw", "Kiswahili"), ("en", "English")),
+        default="auto",
+    )

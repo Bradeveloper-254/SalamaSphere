@@ -33,6 +33,9 @@ EVIDENCE_ENCRYPTION_KEY = env(
     default="",
 )
 
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+SPEECH_TO_TEXT_MODEL = env("SPEECH_TO_TEXT_MODEL", default="whisper-1")
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 

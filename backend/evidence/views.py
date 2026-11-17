@@ -39,11 +39,28 @@ from emergency_notifications.services import (
 )
 
 from .crypto import decrypt_evidence, encrypt_evidence
-from .models import Evidence
-from .serializers import EvidenceUploadSerializer
+from .models import Evidence, EvidenceAccessAudit, EvidenceTranscript
+from .serializers import EvidenceUploadSerializer, EvidenceTranscriptionSerializer
+from .transcription import OpenAITranscriptionProvider, TranscriptionError
 
 
 logger = logging.getLogger(__name__)
+
+
+def audit_evidence_access(request, incident, action, outcome, evidence=None):
+    request_id = (
+        request.headers.get("X-Request-ID")
+        or request.headers.get("X-Correlation-ID")
+        or ""
+    )[:128]
+    EvidenceAccessAudit.objects.create(
+        incident=incident,
+        evidence=evidence,
+        user=request.user,
+        action=action,
+        outcome=outcome,
+        request_id=request_id,
+    )
 
 
 class EvidenceIntegrityError(Exception):
@@ -105,11 +122,23 @@ class EvidenceUploadView(APIView):
     def get(self, request, incident_id):
         incident = self.get_incident(request, incident_id)
         if incident is None:
+            denied_incident = Incident.objects.filter(pk=incident_id).first()
+            if denied_incident is not None:
+                audit_evidence_access(
+                    request, denied_incident, EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED,
+                )
             return Response(
                 {"detail": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        items = list(Evidence.objects.filter(incident=incident))
+        for item in items:
+            audit_evidence_access(
+                request, incident, EvidenceAccessAudit.Action.VIEWED,
+                EvidenceAccessAudit.Outcome.SUCCESS, item,
+            )
         return Response([
             {
                 "id": str(item.id),
@@ -123,13 +152,19 @@ class EvidenceUploadView(APIView):
                 "file_url": f"/api/evidence/{item.id}/file/",
                 "metadata": item.metadata,
             }
-            for item in Evidence.objects.filter(incident=incident)
+            for item in items
         ])
 
     def post(self, request, incident_id):
         incident = self.get_incident(request, incident_id)
 
         if incident is None:
+            denied_incident = Incident.objects.filter(pk=incident_id).first()
+            if denied_incident is not None:
+                audit_evidence_access(
+                    request, denied_incident, EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED,
+                )
             return Response(
                 {"detail": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -144,6 +179,8 @@ class EvidenceUploadView(APIView):
         uploaded_file = serializer.validated_data["file"]
         evidence_type = serializer.validated_data["evidence_type"]
         recorded_at = serializer.validated_data.get("recorded_at")
+        expected_hash = serializer.validated_data["sha256_hash"].lower()
+        hash_type = serializer.validated_data["sha256_hash_type"]
 
         extension = Path(uploaded_file.name).suffix.lower()
         mime_type = (
@@ -156,6 +193,12 @@ class EvidenceUploadView(APIView):
         )
 
         sha256_hash = calculate_sha256(uploaded_file)
+        if not hmac.compare_digest(sha256_hash, expected_hash):
+            return Response(
+                {"verification_status": "VERIFICATION_FAILED",
+                 "detail": "Uploaded bytes do not match the original SHA-256 hash."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         uploaded_file.seek(0)
         evidence_id = uuid.uuid4()
 
@@ -184,6 +227,7 @@ class EvidenceUploadView(APIView):
                     mime_type=mime_type,
                     file_size_bytes=uploaded_file.size,
                     sha256_hash=sha256_hash,
+                    sha256_hash_type=hash_type,
                     encryption_version=1,
                     verification_status=(
                         Evidence.VerificationStatus.PENDING
@@ -242,6 +286,7 @@ class EvidenceUploadView(APIView):
                 "mime_type": evidence.mime_type,
                 "file_size_bytes": evidence.file_size_bytes,
                 "sha256_hash": evidence.sha256_hash,
+                "sha256_hash_type": evidence.sha256_hash_type,
                 "encrypted_at_rest": evidence.encryption_version > 0,
                 "verification_status": evidence.verification_status,
                 "uploaded_at": evidence.uploaded_at,
@@ -286,6 +331,12 @@ class EvidenceAudioView(EvidenceUploadView):
     def get(self, request, incident_id):
         incident = self._get_incident(request, incident_id)
         if incident is None:
+            denied_incident = Incident.objects.filter(pk=incident_id).first()
+            if denied_incident is not None:
+                audit_evidence_access(
+                    request, denied_incident, EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED,
+                )
             return Response(
                 {"detail": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -310,11 +361,9 @@ class EvidenceAudioView(EvidenceUploadView):
             )
         except EvidenceIntegrityError:
             mark_evidence_verified(evidence, matches=False)
-            record_incident_audit(
-                actor=request.user,
-                incident=incident,
-                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            audit_evidence_access(
+                request, incident, EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+                EvidenceAccessAudit.Outcome.DENIED, evidence,
             )
             return Response(
                 {"detail": "Evidence integrity verification failed."},
@@ -323,11 +372,9 @@ class EvidenceAudioView(EvidenceUploadView):
 
         if not hmac.compare_digest(evidence.sha256_hash, current_hash):
             mark_evidence_verified(evidence, matches=False)
-            record_incident_audit(
-                actor=request.user,
-                incident=incident,
-                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            audit_evidence_access(
+                request, incident, EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+                EvidenceAccessAudit.Outcome.DENIED, evidence,
             )
             return Response(
                 {"detail": "Evidence integrity verification failed."},
@@ -335,11 +382,9 @@ class EvidenceAudioView(EvidenceUploadView):
             )
 
         mark_evidence_verified(evidence, matches=True)
-        record_incident_audit(
-            actor=request.user,
-            incident=incident,
-            action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-            outcome=IncidentAuditEvent.Outcome.SUCCESS,
+        audit_evidence_access(
+            request, incident, EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+            EvidenceAccessAudit.Outcome.SUCCESS, evidence,
         )
 
         response = FileResponse(
@@ -451,12 +496,21 @@ class EmergencyIncidentLinkView(APIView):
                 "This private incident link is invalid or has expired."
             )
         incident, evidence = access
+        action = (
+            EvidenceAccessAudit.Action.DOWNLOADED
+            if request.GET.get("download") == "1"
+            else EvidenceAccessAudit.Action.AUDIO_ACCESSED
+        )
         try:
             plaintext, current_hash = load_evidence(evidence)
         except FileNotFoundError:
             return HttpResponseNotFound("The recorded audio is unavailable.")
         except EvidenceIntegrityError:
             mark_evidence_verified(evidence, matches=False)
+            audit_evidence_access(
+                request, incident, action, EvidenceAccessAudit.Outcome.DENIED,
+                evidence,
+            )
             return HttpResponse(
                 "Audio integrity verification failed.",
                 status=status.HTTP_409_CONFLICT,
@@ -464,12 +518,20 @@ class EmergencyIncidentLinkView(APIView):
 
         if not hmac.compare_digest(evidence.sha256_hash, current_hash):
             mark_evidence_verified(evidence, matches=False)
+            audit_evidence_access(
+                request, incident, action, EvidenceAccessAudit.Outcome.DENIED,
+                evidence,
+            )
             return HttpResponse(
                 "Audio integrity verification failed.",
                 status=status.HTTP_409_CONFLICT,
             )
 
         mark_evidence_verified(evidence, matches=True)
+        audit_evidence_access(
+            request, incident, action, EvidenceAccessAudit.Outcome.SUCCESS,
+            evidence,
+        )
         filename = get_valid_filename(evidence.original_filename)
         disposition = (
             "attachment"
@@ -505,6 +567,13 @@ class EvidenceVerificationView(APIView):
         ).first()
 
         if incident is None:
+            denied_incident = Incident.objects.filter(pk=incident_id).first()
+            if denied_incident is not None:
+                audit_evidence_access(
+                    request, denied_incident,
+                    EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED,
+                )
             return Response(
                 {"detail": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -513,8 +582,13 @@ class EvidenceVerificationView(APIView):
         evidence_items = Evidence.objects.filter(
             incident=incident
         )
+        evidence_items = list(evidence_items)
 
         if not evidence_items.exists():
+            audit_evidence_access(
+                request, incident, EvidenceAccessAudit.Action.VERIFIED,
+                EvidenceAccessAudit.Outcome.SUCCESS,
+            )
             return Response(
                 {"detail": "No evidence exists for this incident."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -539,7 +613,9 @@ class EvidenceVerificationView(APIView):
                     "original_sha256": evidence.sha256_hash,
                     "current_sha256": current_hash,
                     "matches": matches,
-                    "verification_status": evidence.verification_status,
+                    "verification_status": (
+                        "VERIFIED" if matches else "VERIFICATION_FAILED"
+                    ),
                     "verified_at": now,
                 })
 
@@ -622,6 +698,16 @@ class EvidenceVerificationView(APIView):
                 else IncidentAuditEvent.Outcome.FAILURE
             ),
         )
+        for evidence in evidence_items:
+            result = next(
+                item for item in results
+                if item["evidence_id"] == str(evidence.id)
+            )
+            audit_evidence_access(
+                request, incident, EvidenceAccessAudit.Action.VERIFIED,
+                (EvidenceAccessAudit.Outcome.SUCCESS if result["matches"]
+                 else EvidenceAccessAudit.Outcome.DENIED), evidence,
+            )
 
         return Response(
             {
@@ -655,6 +741,15 @@ class EvidenceFileView(APIView):
                 incident__device__owner=request.user,
             ).first()
         if evidence is None:
+            candidate = Evidence.objects.filter(pk=evidence_id).select_related(
+                "incident"
+            ).first()
+            if candidate is not None:
+                audit_evidence_access(
+                    request, candidate.incident,
+                    EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED, candidate,
+                )
             return Response(
                 {"detail": "Evidence file not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -669,11 +764,9 @@ class EvidenceFileView(APIView):
             )
         except EvidenceIntegrityError:
             mark_evidence_verified(evidence, matches=False)
-            record_incident_audit(
-                actor=request.user,
-                incident=evidence.incident,
-                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            audit_evidence_access(
+                request, evidence.incident, EvidenceAccessAudit.Action.DOWNLOADED,
+                EvidenceAccessAudit.Outcome.DENIED, evidence,
             )
             return Response(
                 {"detail": "Evidence integrity verification failed."},
@@ -682,11 +775,9 @@ class EvidenceFileView(APIView):
 
         if not hmac.compare_digest(evidence.sha256_hash, current_hash):
             mark_evidence_verified(evidence, matches=False)
-            record_incident_audit(
-                actor=request.user,
-                incident=evidence.incident,
-                action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-                outcome=IncidentAuditEvent.Outcome.FAILURE,
+            audit_evidence_access(
+                request, evidence.incident, EvidenceAccessAudit.Action.DOWNLOADED,
+                EvidenceAccessAudit.Outcome.DENIED, evidence,
             )
             return Response(
                 {"detail": "Evidence integrity verification failed."},
@@ -694,11 +785,10 @@ class EvidenceFileView(APIView):
             )
 
         mark_evidence_verified(evidence, matches=True)
-        record_incident_audit(
-            actor=request.user,
-            incident=evidence.incident,
-            action=IncidentAuditEvent.Action.EVIDENCE_ACCESSED,
-            outcome=IncidentAuditEvent.Outcome.SUCCESS,
+        audit_evidence_access(
+            request, evidence.incident,
+            EvidenceAccessAudit.Action.DOWNLOADED,
+            EvidenceAccessAudit.Outcome.SUCCESS, evidence,
         )
 
         response = FileResponse(
@@ -711,3 +801,100 @@ class EvidenceFileView(APIView):
         )
         response["X-Evidence-SHA256"] = evidence.sha256_hash
         return response
+
+
+class EvidenceTranscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, evidence_id):
+        evidence = Evidence.objects.filter(pk=evidence_id).filter(
+            Q(incident__user=request.user)
+            | Q(incident__device__owner=request.user)
+        ).first()
+        if evidence is None:
+            candidate = Evidence.objects.filter(pk=evidence_id).select_related(
+                "incident"
+            ).first()
+            if candidate:
+                audit_evidence_access(
+                    request, candidate.incident,
+                    EvidenceAccessAudit.Action.ACCESS_DENIED,
+                    EvidenceAccessAudit.Outcome.DENIED, candidate,
+                )
+            return Response({"detail": "Evidence file not found."}, status=404)
+        if evidence.evidence_type != Evidence.EvidenceType.AUDIO:
+            return Response({"detail": "Only audio evidence can be transcribed."}, status=400)
+
+        serializer = EvidenceTranscriptionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        requested_language = serializer.validated_data["language"]
+        transcript_record = EvidenceTranscript.objects.create(
+            evidence=evidence,
+            incident=evidence.incident,
+            language=requested_language if requested_language != "auto" else "und",
+            language_source=(
+                EvidenceTranscript.LanguageSource.USER_SELECTED
+                if requested_language != "auto"
+                else EvidenceTranscript.LanguageSource.AUTOMATIC
+            ),
+            status=EvidenceTranscript.Status.PROCESSING,
+            created_by=request.user,
+        )
+        try:
+            audio, current_hash = load_evidence(evidence)
+            if not hmac.compare_digest(evidence.sha256_hash, current_hash):
+                raise TranscriptionError("evidence_integrity_failed")
+            language = None if requested_language == "auto" else requested_language
+            text, detected_language = OpenAITranscriptionProvider().transcribe(
+                audio,
+                evidence.original_filename,
+                evidence.mime_type or "application/octet-stream",
+                language,
+            )
+            transcript_record.language = (
+                detected_language if requested_language == "auto" else requested_language
+            )
+            transcript_record.transcript = text
+            transcript_record.status = EvidenceTranscript.Status.COMPLETED
+            transcript_record.processed_at = timezone.now()
+            transcript_record.save(update_fields=[
+                "language", "transcript", "status", "processed_at",
+            ])
+            audit_evidence_access(
+                request, evidence.incident, EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+                EvidenceAccessAudit.Outcome.SUCCESS, evidence,
+            )
+            return Response({
+                "transcript_id": transcript_record.pk,
+                "evidence_id": str(evidence.pk),
+                "incident_id": str(evidence.incident_id),
+                "language": transcript_record.language,
+                "language_source": transcript_record.language_source,
+                "processed_at": transcript_record.processed_at,
+                "status": transcript_record.status,
+                "transcript": text,
+                "human_review_required": True,
+            }, status=201)
+        except FileNotFoundError:
+            error_code = "evidence_unavailable"
+        except TranscriptionError as exc:
+            error_code = exc.code
+        except Exception:
+            logger.error("Speech transcription failed (unexpected processing error).")
+            error_code = "processing_failed"
+
+        transcript_record.status = EvidenceTranscript.Status.FAILED
+        transcript_record.error_code = error_code
+        transcript_record.processed_at = timezone.now()
+        transcript_record.save(update_fields=["status", "error_code", "processed_at"])
+        audit_evidence_access(
+            request, evidence.incident, EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+            EvidenceAccessAudit.Outcome.DENIED, evidence,
+        )
+        return Response({
+            "transcript_id": transcript_record.pk,
+            "status": transcript_record.status,
+            "error": "Speech recognition could not process this audio. Please try another recording or language setting.",
+            "error_code": error_code,
+            "human_review_required": True,
+        }, status=422)
