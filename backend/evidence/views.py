@@ -39,7 +39,7 @@ from emergency_notifications.services import (
 )
 
 from .crypto import decrypt_evidence, encrypt_evidence
-from .models import Evidence, EvidenceAccessAudit, EvidenceTranscript
+from .models import Evidence, EvidenceAccessAudit, EvidenceTranscript, EvidenceTranscriptRevision
 from .serializers import EvidenceUploadSerializer, EvidenceTranscriptionSerializer
 from .transcription import OpenAITranscriptionProvider, TranscriptionError
 
@@ -56,7 +56,7 @@ def audit_evidence_access(request, incident, action, outcome, evidence=None):
     EvidenceAccessAudit.objects.create(
         incident=incident,
         evidence=evidence,
-        user=request.user,
+        user=(request.user if getattr(request.user, "is_authenticated", False) else None),
         action=action,
         outcome=outcome,
         request_id=request_id,
@@ -179,7 +179,7 @@ class EvidenceUploadView(APIView):
         uploaded_file = serializer.validated_data["file"]
         evidence_type = serializer.validated_data["evidence_type"]
         recorded_at = serializer.validated_data.get("recorded_at")
-        expected_hash = serializer.validated_data["sha256_hash"].lower()
+        expected_hash = serializer.validated_data.get("sha256_hash")
         hash_type = serializer.validated_data["sha256_hash_type"]
 
         extension = Path(uploaded_file.name).suffix.lower()
@@ -193,7 +193,7 @@ class EvidenceUploadView(APIView):
         )
 
         sha256_hash = calculate_sha256(uploaded_file)
-        if not hmac.compare_digest(sha256_hash, expected_hash):
+        if expected_hash and not hmac.compare_digest(sha256_hash, expected_hash.lower()):
             return Response(
                 {"verification_status": "VERIFICATION_FAILED",
                  "detail": "Uploaded bytes do not match the original SHA-256 hash."},
@@ -584,7 +584,7 @@ class EvidenceVerificationView(APIView):
         )
         evidence_items = list(evidence_items)
 
-        if not evidence_items.exists():
+        if not evidence_items:
             audit_evidence_access(
                 request, incident, EvidenceAccessAudit.Action.VERIFIED,
                 EvidenceAccessAudit.Outcome.SUCCESS,
@@ -852,7 +852,7 @@ class EvidenceTranscriptionView(APIView):
                 language,
             )
             transcript_record.language = (
-                detected_language if requested_language == "auto" else requested_language
+                detected_language or "und" if requested_language == "auto" else requested_language
             )
             transcript_record.transcript = text
             transcript_record.status = EvidenceTranscript.Status.COMPLETED
@@ -868,7 +868,7 @@ class EvidenceTranscriptionView(APIView):
                 "transcript_id": transcript_record.pk,
                 "evidence_id": str(evidence.pk),
                 "incident_id": str(evidence.incident_id),
-                "language": transcript_record.language,
+                "language": transcript_record.language if transcript_record.language != "und" else None,
                 "language_source": transcript_record.language_source,
                 "processed_at": transcript_record.processed_at,
                 "status": transcript_record.status,
@@ -898,3 +898,57 @@ class EvidenceTranscriptionView(APIView):
             "error_code": error_code,
             "human_review_required": True,
         }, status=422)
+
+
+def owned_transcript_evidence(user, evidence_id):
+    return Evidence.objects.filter(pk=evidence_id).filter(
+        Q(incident__user=user) | Q(incident__device__owner=user)
+    ).first()
+
+
+class EvidenceTranscriptListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, evidence_id):
+        evidence = owned_transcript_evidence(request.user, evidence_id)
+        if evidence is None:
+            return Response({"detail": "Evidence file not found."}, status=404)
+        rows = evidence.transcripts.all()
+        return Response([{
+            "transcript_id": item.pk,
+            "status": item.status,
+            "language": item.language if item.language != "und" else None,
+            "language_source": item.language_source,
+            "transcript": item.transcript,
+            "reviewed_transcript": item.reviewed_transcript or None,
+            "human_review_required": item.human_review_required,
+            "processed_at": item.processed_at,
+            "reviewed_at": item.reviewed_at,
+            "history": [{"text": rev.text, "reviewer_id": rev.reviewer_id,
+                         "created_at": rev.created_at} for rev in item.revisions.all()],
+        } for item in rows])
+
+
+class EvidenceTranscriptReviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, transcript_id):
+        item = EvidenceTranscript.objects.filter(pk=transcript_id).filter(
+            Q(incident__user=request.user) | Q(incident__device__owner=request.user)
+        ).first()
+        if item is None:
+            return Response({"detail": "Transcript not found."}, status=404)
+        text = request.data.get("transcript")
+        if not isinstance(text, str) or not text.strip():
+            return Response({"transcript": ["A corrected transcript is required."]}, status=400)
+        corrected = text.strip()
+        EvidenceTranscriptRevision.objects.create(
+            transcript_record=item, text=corrected, reviewer=request.user,
+        )
+        item.reviewed_transcript = corrected
+        item.reviewed_by = request.user
+        item.reviewed_at = timezone.now()
+        item.save(update_fields=["reviewed_transcript", "reviewed_by", "reviewed_at"])
+        return Response({"transcript_id": item.pk, "transcript": item.transcript,
+                         "reviewed_transcript": corrected,
+                         "reviewed_at": item.reviewed_at})

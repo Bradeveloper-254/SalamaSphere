@@ -45,11 +45,11 @@ class EvidenceUploadSerializer(serializers.Serializer):
     )
     sha256_hash = serializers.RegexField(
         regex=r"^[0-9a-fA-F]{64}$",
-        required=True,
+        required=False,
         error_messages={"invalid": "Provide a valid 64-character SHA-256 hash."},
     )
     sha256_hash_type = serializers.ChoiceField(
-        choices=("plaintext",), required=True,
+        choices=("plaintext",), required=False, default="plaintext",
     )
     share_with = serializers.ChoiceField(
         choices=("authorities", "trusted_contacts", "both"),

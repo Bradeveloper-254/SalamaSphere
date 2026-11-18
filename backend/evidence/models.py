@@ -121,7 +121,7 @@ class EvidenceAccessAudit(models.Model):
         related_name="access_audit_events",
     )
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
         related_name="evidence_access_audit_events",
     )
     action = models.CharField(max_length=24, choices=Action.choices)
@@ -153,6 +153,7 @@ class EvidenceTranscript(models.Model):
     language = models.CharField(max_length=16)
     language_source = models.CharField(max_length=20, choices=LanguageSource.choices)
     transcript = models.TextField(blank=True)
+    reviewed_transcript = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices)
     error_code = models.CharField(max_length=64, blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
@@ -169,3 +170,15 @@ class EvidenceTranscript(models.Model):
 
     class Meta:
         ordering = ["-processed_at"]
+
+
+class EvidenceTranscriptRevision(models.Model):
+    transcript_record = models.ForeignKey(
+        EvidenceTranscript, on_delete=models.PROTECT, related_name="revisions"
+    )
+    text = models.TextField()
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]

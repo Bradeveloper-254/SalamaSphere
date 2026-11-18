@@ -32,7 +32,6 @@ class OpenAITranscriptionProvider:
             ])
         field("model", settings.SPEECH_TO_TEXT_MODEL)
         field("response_format", "json")
-        field("timestamp_granularities[]", "segment")
         if language:
             field("language", language)
         parts.extend([
@@ -56,7 +55,10 @@ class OpenAITranscriptionProvider:
         except HTTPError as exc:
             logger.warning("Speech provider returned HTTP %s", exc.code)
             raise TranscriptionError("provider_request_failed") from exc
-        except (URLError, TimeoutError, OSError, ValueError) as exc:
+        except TimeoutError as exc:
+            logger.warning("Speech provider request timed out")
+            raise TranscriptionError("provider_timeout") from exc
+        except (URLError, OSError, ValueError) as exc:
             logger.warning("Speech provider request failed (%s)", type(exc).__name__)
             raise TranscriptionError("provider_unavailable") from exc
 
@@ -65,5 +67,5 @@ class OpenAITranscriptionProvider:
             raise TranscriptionError("no_speech_recognized")
         detected = payload.get("language")
         if not detected:
-            detected = "sw" if language == "sw" else "en" if language == "en" else "und"
+            detected = None
         return transcript.strip(), detected

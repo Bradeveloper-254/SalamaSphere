@@ -9,6 +9,8 @@ from .views import (
     EvidenceUploadView,
     EvidenceVerificationView,
     EvidenceTranscriptionView,
+    EvidenceTranscriptListView,
+    EvidenceTranscriptReviewView,
 )
 
 urlpatterns = [
@@ -32,6 +34,8 @@ urlpatterns = [
         EvidenceTranscriptionView.as_view(),
         name="evidence-transcribe",
     ),
+    path("evidence/<uuid:evidence_id>/transcripts/", EvidenceTranscriptListView.as_view(), name="evidence-transcripts"),
+    path("transcripts/<int:transcript_id>/review/", EvidenceTranscriptReviewView.as_view(), name="evidence-transcript-review"),
     path(
         "incidents/<uuid:incident_id>/audio/",
         EvidenceAudioView.as_view(),

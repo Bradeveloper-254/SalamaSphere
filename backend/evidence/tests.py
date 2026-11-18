@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 from datetime import timedelta
@@ -230,8 +231,91 @@ class IncidentEvidenceApiTests(TestCase):
         self.assertIn("could not process", response.data["error"])
         self.assertEqual(EvidenceTranscript.objects.get().status, "failed")
 
+    def test_selected_languages_and_invalid_language(self):
+        self.client.post(self.upload_url, {
+            "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+        }, format="multipart")
+        evidence = Evidence.objects.get()
+        url = reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk})
+        for lang in ("sw", "en"):
+            with self.subTest(language=lang), patch("evidence.views.OpenAITranscriptionProvider.transcribe", return_value=("words", lang)) as provider:
+                response = self.client.post(url, {"language": lang}, format="json")
+                self.assertEqual(response.status_code, 201)
+                self.assertEqual(response.data["language"], lang)
+                self.assertEqual(provider.call_args.args[3], lang)
+        invalid = self.client.post(url, {"language": "xx"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_automatic_language_is_unknown_when_provider_omits_metadata(self):
+        self.client.post(self.upload_url, {
+            "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+        }, format="multipart")
+        evidence = Evidence.objects.get()
+        with patch("evidence.views.OpenAITranscriptionProvider.transcribe", return_value=("words", None)):
+            response = self.client.post(reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk}), {"language": "auto"}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.data["language"])
+        self.assertEqual(EvidenceTranscript.objects.get().language, "und")
+
+    @patch("evidence.views.OpenAITranscriptionProvider.transcribe")
+    def test_transcription_rejects_tampered_evidence_without_provider_call(self, provider):
+        self.client.post(self.upload_url, {
+            "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+        }, format="multipart")
+        evidence = Evidence.objects.get()
+        stored_path = Path(self.media_directory.name) / evidence.storage_key
+        with stored_path.open("r+b") as stored:
+            stored.seek(-1, 2)
+            byte = stored.read(1)
+            stored.seek(-1, 2)
+            stored.write(bytes([byte[0] ^ 1]))
+        response = self.client.post(reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk}), {"language": "en"}, format="json")
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.data["error_code"], "evidence_integrity_failed")
+        provider.assert_not_called()
+
+    def test_empty_audio_is_rejected_at_upload(self):
+        response = self.client.post(self.upload_url, {
+            "file": SimpleUploadedFile("empty.wav", b"", content_type="audio/wav"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 400)
+
+    @patch("evidence.transcription.urlopen", side_effect=TimeoutError())
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_provider_timeout_is_reported_without_network_call(self, urlopen):
+        from .transcription import OpenAITranscriptionProvider, TranscriptionError
+        with self.assertRaises(TranscriptionError) as raised:
+            OpenAITranscriptionProvider().transcribe(b"audio", "a.wav", "audio/wav")
+        self.assertEqual(raised.exception.code, "provider_timeout")
+        urlopen.assert_called_once()
+
+    @patch("evidence.transcription.urlopen")
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_provider_parses_json_and_does_not_infer_language(self, urlopen):
+        from .transcription import OpenAITranscriptionProvider
+        class Reply:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return json.dumps({"text": "recognized"}).encode()
+        urlopen.return_value = Reply()
+        text, language = OpenAITranscriptionProvider().transcribe(b"audio", "a.wav", "audio/wav")
+        self.assertEqual(text, "recognized")
+        self.assertIsNone(language)
+        body = urlopen.call_args.args[0].data
+        self.assertNotIn(b"timestamp_granularities", body)
+
+    @patch("evidence.transcription.urlopen")
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_provider_api_rejection_is_normalized(self, urlopen):
+        from urllib.error import HTTPError
+        from .transcription import OpenAITranscriptionProvider, TranscriptionError
+        urlopen.side_effect = HTTPError("url", 400, "rejected", {}, None)
+        with self.assertRaises(TranscriptionError) as raised:
+            OpenAITranscriptionProvider().transcribe(b"audio", "a.wav", "audio/wav")
+        self.assertEqual(raised.exception.code, "provider_request_failed")
+
     def test_upload_rejects_missing_malformed_or_mismatched_hash(self):
-        for supplied in (None, "bad-hash", "0" * 64):
+        for supplied in ("bad-hash", "0" * 64):
             data = {
                 "file": SimpleUploadedFile(
                     "audio.wav", b"original-audio", content_type="audio/wav"
@@ -239,11 +323,38 @@ class IncidentEvidenceApiTests(TestCase):
                 "sha256_hash_type": "plaintext",
                 "share_with": "authorities",
             }
-            if supplied is not None:
-                data["sha256_hash"] = supplied
+            data["sha256_hash"] = supplied
             response = self.client.post(self.upload_url, data, format="multipart")
             self.assertEqual(response.status_code, 400)
             self.assertEqual(Evidence.objects.count(), 0)
+
+    def test_legacy_audio_upload_calculates_hash_when_client_does_not_send_one(self):
+        body = b"wearable-audio"
+        response = self.client.post(
+            reverse("incident-audio", kwargs={"incident_id": self.incident.id}),
+            {"file": SimpleUploadedFile("recording.wav", body, content_type="audio/wav")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Evidence.objects.get().sha256_hash, hashlib.sha256(body).hexdigest())
+
+    def test_transcript_review_preserves_machine_text_and_history(self):
+        self.client.post(self.upload_url, {
+            "file": SimpleUploadedFile("audio.wav", b"audio", content_type="audio/wav"),
+        }, format="multipart")
+        evidence = Evidence.objects.get()
+        with patch("evidence.views.OpenAITranscriptionProvider.transcribe", return_value=("machine words", "en")):
+            response = self.client.post(reverse("evidence-transcribe", kwargs={"evidence_id": evidence.pk}), {"language": "en"}, format="json")
+        self.assertEqual(response.status_code, 201)
+        item = EvidenceTranscript.objects.get()
+        review = self.client.put(reverse("evidence-transcript-review", kwargs={"transcript_id": item.pk}), {"transcript": "corrected words"}, format="json")
+        self.assertEqual(review.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.transcript, "machine words")
+        self.assertEqual(item.reviewed_transcript, "corrected words")
+        history = self.client.get(reverse("evidence-transcripts", kwargs={"evidence_id": evidence.pk}))
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.data[0]["history"][0]["text"], "corrected words")
 
     def test_expected_hash_is_preserved_on_verification(self):
         expected = hashlib.sha256(b"video-data").hexdigest()
@@ -576,6 +687,12 @@ class IncidentEvidenceApiTests(TestCase):
         )
         self.assertEqual(audio.status_code, 200)
         self.assertEqual(b"".join(audio.streaming_content), b"audio-data")
+        anonymous_audit = EvidenceAccessAudit.objects.filter(
+            evidence=Evidence.objects.get(),
+            action=EvidenceAccessAudit.Action.AUDIO_ACCESSED,
+            outcome=EvidenceAccessAudit.Outcome.SUCCESS,
+        ).latest("occurred_at")
+        self.assertIsNone(anonymous_audit.user_id)
 
     @override_settings(
         SALAMASPHERE_PUBLIC_BASE_URL="https://api.salama.example",
