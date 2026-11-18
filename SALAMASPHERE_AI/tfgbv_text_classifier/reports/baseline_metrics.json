@@ -1,0 +1,21 @@
+{
+    "model": "TF-IDF + Logistic Regression",
+    "dataset": "metabloit/offensive-swahili-text",
+    "train_examples": 4324,
+    "validation_examples": 970,
+    "test_examples": 642,
+    "accuracy": 0.6012461059190031,
+    "precision_macro": 0.7815699658703072,
+    "recall_macro": 0.5897435897435898,
+    "f1_macro": 0.5124359217771027,
+    "confusion_matrix": [
+        [
+            330,
+            0
+        ],
+        [
+            256,
+            56
+        ]
+    ]
+}

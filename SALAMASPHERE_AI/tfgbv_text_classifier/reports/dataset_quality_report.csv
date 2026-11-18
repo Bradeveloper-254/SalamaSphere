@@ -1,0 +1,4 @@
+split,raw_rows,empty_or_blank,exact_duplicate_rows,normalized_duplicate_rows,conflicting_label_rows,clean_rows,removed_total,near_duplicate_rows_removed,within_split_near_neighbor_rows_flagged_not_removed,clean_label_0,clean_label_1
+train,4954,4,282,279,2,4321,633,3,9,2264,2057
+validation,990,1,19,19,0,970,20,0,4,487,483
+test,660,0,18,18,0,642,18,0,2,330,312

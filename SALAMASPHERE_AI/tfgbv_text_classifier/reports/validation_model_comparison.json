@@ -1,0 +1,503 @@
+{
+  "selection_split": "validation",
+  "fit_split_for_new_models": "train",
+  "test_split_accessed": false,
+  "threshold_policy": "maximize precision subject to offensive recall >= 70%; otherwise maximize offensive F1",
+  "candidates": [
+    {
+      "name": "clean_word_char_linear_svm",
+      "score_kind": "decision_score",
+      "threshold": -0.28189041864009656,
+      "threshold_selection": "Highest validation precision with offensive recall >= 70%",
+      "validation_examples": 970,
+      "accuracy": 0.7958762886597938,
+      "macro_f1": 0.7939411885879082,
+      "offensive_precision": 0.8625954198473282,
+      "offensive_recall": 0.7018633540372671,
+      "false_negative_rate": 0.2981366459627329,
+      "false_positive_rate": 0.11088295687885011,
+      "confusion_matrix_labels_0_1": [
+        [
+          433,
+          54
+        ],
+        [
+          144,
+          339
+        ]
+      ],
+      "per_class": {
+        "non_offensive": {
+          "precision": 0.7504332755632582,
+          "recall": 0.8891170431211499,
+          "f1-score": 0.8139097744360902,
+          "support": 487.0
+        },
+        "offensive": {
+          "precision": 0.8625954198473282,
+          "recall": 0.7018633540372671,
+          "f1-score": 0.773972602739726,
+          "support": 483.0
+        }
+      },
+      "config": {
+        "word_ngrams": [
+          1,
+          2
+        ],
+        "character_analyzer": "char",
+        "character_ngrams": [
+          2,
+          5
+        ],
+        "C": 1.0,
+        "random_state": 42,
+        "artifact": "models\\experiments\\clean_word_char_linear_svm.joblib"
+      }
+    },
+    {
+      "name": "charwb_word_char_logistic",
+      "score_kind": "probability",
+      "threshold": 0.3278747753553614,
+      "threshold_selection": "Highest validation precision with offensive recall >= 70%",
+      "validation_examples": 970,
+      "accuracy": 0.7711340206185567,
+      "macro_f1": 0.7699358974358974,
+      "offensive_precision": 0.8129496402877698,
+      "offensive_recall": 0.7018633540372671,
+      "false_negative_rate": 0.2981366459627329,
+      "false_positive_rate": 0.1601642710472279,
+      "confusion_matrix_labels_0_1": [
+        [
+          409,
+          78
+        ],
+        [
+          144,
+          339
+        ]
+      ],
+      "per_class": {
+        "non_offensive": {
+          "precision": 0.7396021699819169,
+          "recall": 0.839835728952772,
+          "f1-score": 0.7865384615384615,
+          "support": 487.0
+        },
+        "offensive": {
+          "precision": 0.8129496402877698,
+          "recall": 0.7018633540372671,
+          "f1-score": 0.7533333333333333,
+          "support": 483.0
+        }
+      },
+      "config": {
+        "normalization": "none beyond TfidfVectorizer defaults",
+        "word_ngrams": [
+          1,
+          2
+        ],
+        "character_analyzer": "char_wb",
+        "character_ngrams": [
+          3,
+          6
+        ],
+        "random_state": 42,
+        "artifact": "models\\experiments\\charwb_word_char_logistic.joblib"
+      },
+      "brier_score_validation": 0.18543790003458407,
+      "expected_calibration_error_10_bins_validation": 0.18276722578860288,
+      "calibration_bins_validation": [
+        {
+          "lower": 0.0,
+          "upper": 0.1,
+          "count": 75,
+          "mean_score": 0.0665641955814111,
+          "observed_offensive_rate": 0.0
+        },
+        {
+          "lower": 0.1,
+          "upper": 0.2,
+          "count": 206,
+          "mean_score": 0.15080828084064177,
+          "observed_offensive_rate": 0.0970873786407767
+        },
+        {
+          "lower": 0.2,
+          "upper": 0.30000000000000004,
+          "count": 214,
+          "mean_score": 0.2489850530456986,
+          "observed_offensive_rate": 0.4158878504672897
+        },
+        {
+          "lower": 0.30000000000000004,
+          "upper": 0.4,
+          "count": 195,
+          "mean_score": 0.34949578231512807,
+          "observed_offensive_rate": 0.6358974358974359
+        },
+        {
+          "lower": 0.4,
+          "upper": 0.5,
+          "count": 85,
+          "mean_score": 0.45025575250308514,
+          "observed_offensive_rate": 0.7647058823529411
+        },
+        {
+          "lower": 0.5,
+          "upper": 0.6000000000000001,
+          "count": 51,
+          "mean_score": 0.545791275882223,
+          "observed_offensive_rate": 0.8823529411764706
+        },
+        {
+          "lower": 0.6000000000000001,
+          "upper": 0.7000000000000001,
+          "count": 36,
+          "mean_score": 0.6537496742054715,
+          "observed_offensive_rate": 0.9166666666666666
+        },
+        {
+          "lower": 0.7000000000000001,
+          "upper": 0.8,
+          "count": 39,
+          "mean_score": 0.7504701013068753,
+          "observed_offensive_rate": 0.9743589743589743
+        },
+        {
+          "lower": 0.8,
+          "upper": 0.9,
+          "count": 36,
+          "mean_score": 0.8397601134779403,
+          "observed_offensive_rate": 1.0
+        },
+        {
+          "lower": 0.9,
+          "upper": 1.0,
+          "count": 33,
+          "mean_score": 0.945404614038703,
+          "observed_offensive_rate": 1.0
+        }
+      ]
+    },
+    {
+      "name": "clean_word_char_logistic",
+      "score_kind": "probability",
+      "threshold": 0.3346948511007838,
+      "threshold_selection": "Highest validation precision with offensive recall >= 70%",
+      "validation_examples": 970,
+      "accuracy": 0.7680412371134021,
+      "macro_f1": 0.7669292650342638,
+      "offensive_precision": 0.8071428571428572,
+      "offensive_recall": 0.7018633540372671,
+      "false_negative_rate": 0.2981366459627329,
+      "false_positive_rate": 0.16632443531827515,
+      "confusion_matrix_labels_0_1": [
+        [
+          406,
+          81
+        ],
+        [
+          144,
+          339
+        ]
+      ],
+      "per_class": {
+        "non_offensive": {
+          "precision": 0.7381818181818182,
+          "recall": 0.8336755646817249,
+          "f1-score": 0.7830279652844745,
+          "support": 487.0
+        },
+        "offensive": {
+          "precision": 0.8071428571428572,
+          "recall": 0.7018633540372671,
+          "f1-score": 0.7508305647840532,
+          "support": 483.0
+        }
+      },
+      "config": {
+        "word_ngrams": [
+          1,
+          2
+        ],
+        "character_analyzer": "char",
+        "character_ngrams": [
+          2,
+          5
+        ],
+        "random_state": 42,
+        "artifact": "models\\experiments\\clean_word_char_logistic.joblib"
+      },
+      "brier_score_validation": 0.18306402724736034,
+      "expected_calibration_error_10_bins_validation": 0.18258208454920205,
+      "calibration_bins_validation": [
+        {
+          "lower": 0.0,
+          "upper": 0.1,
+          "count": 77,
+          "mean_score": 0.06618725766241211,
+          "observed_offensive_rate": 0.0
+        },
+        {
+          "lower": 0.1,
+          "upper": 0.2,
+          "count": 195,
+          "mean_score": 0.1523064748019079,
+          "observed_offensive_rate": 0.08205128205128205
+        },
+        {
+          "lower": 0.2,
+          "upper": 0.30000000000000004,
+          "count": 214,
+          "mean_score": 0.25068497062776113,
+          "observed_offensive_rate": 0.42990654205607476
+        },
+        {
+          "lower": 0.30000000000000004,
+          "upper": 0.4,
+          "count": 175,
+          "mean_score": 0.34791434391469056,
+          "observed_offensive_rate": 0.6114285714285714
+        },
+        {
+          "lower": 0.4,
+          "upper": 0.5,
+          "count": 104,
+          "mean_score": 0.4491829699268094,
+          "observed_offensive_rate": 0.7019230769230769
+        },
+        {
+          "lower": 0.5,
+          "upper": 0.6000000000000001,
+          "count": 52,
+          "mean_score": 0.5403358332389768,
+          "observed_offensive_rate": 0.9038461538461539
+        },
+        {
+          "lower": 0.6000000000000001,
+          "upper": 0.7000000000000001,
+          "count": 46,
+          "mean_score": 0.6512102102988738,
+          "observed_offensive_rate": 0.8913043478260869
+        },
+        {
+          "lower": 0.7000000000000001,
+          "upper": 0.8,
+          "count": 38,
+          "mean_score": 0.7451712053704531,
+          "observed_offensive_rate": 1.0
+        },
+        {
+          "lower": 0.8,
+          "upper": 0.9,
+          "count": 45,
+          "mean_score": 0.8502594030533771,
+          "observed_offensive_rate": 1.0
+        },
+        {
+          "lower": 0.9,
+          "upper": 1.0,
+          "count": 24,
+          "mean_score": 0.9505676957582362,
+          "observed_offensive_rate": 1.0
+        }
+      ]
+    },
+    {
+      "name": "unicode_whitespace_word_char_logistic",
+      "score_kind": "probability",
+      "threshold": 0.33467097650246325,
+      "threshold_selection": "Highest validation precision with offensive recall >= 70%",
+      "validation_examples": 970,
+      "accuracy": 0.7680412371134021,
+      "macro_f1": 0.7669292650342638,
+      "offensive_precision": 0.8071428571428572,
+      "offensive_recall": 0.7018633540372671,
+      "false_negative_rate": 0.2981366459627329,
+      "false_positive_rate": 0.16632443531827515,
+      "confusion_matrix_labels_0_1": [
+        [
+          406,
+          81
+        ],
+        [
+          144,
+          339
+        ]
+      ],
+      "per_class": {
+        "non_offensive": {
+          "precision": 0.7381818181818182,
+          "recall": 0.8336755646817249,
+          "f1-score": 0.7830279652844745,
+          "support": 487.0
+        },
+        "offensive": {
+          "precision": 0.8071428571428572,
+          "recall": 0.7018633540372671,
+          "f1-score": 0.7508305647840532,
+          "support": 483.0
+        }
+      },
+      "config": {
+        "normalization": "NFKC and whitespace collapse; punctuation and tokens preserved",
+        "word_ngrams": [
+          1,
+          2
+        ],
+        "character_analyzer": "char",
+        "character_ngrams": [
+          2,
+          5
+        ],
+        "random_state": 42,
+        "artifact": "models\\experiments\\unicode_whitespace_logistic.joblib"
+      },
+      "brier_score_validation": 0.1830569270955597,
+      "expected_calibration_error_10_bins_validation": 0.18258559370898905,
+      "calibration_bins_validation": [
+        {
+          "lower": 0.0,
+          "upper": 0.1,
+          "count": 77,
+          "mean_score": 0.06618748040906235,
+          "observed_offensive_rate": 0.0
+        },
+        {
+          "lower": 0.1,
+          "upper": 0.2,
+          "count": 195,
+          "mean_score": 0.15224459249023506,
+          "observed_offensive_rate": 0.08205128205128205
+        },
+        {
+          "lower": 0.2,
+          "upper": 0.30000000000000004,
+          "count": 214,
+          "mean_score": 0.25065108230609634,
+          "observed_offensive_rate": 0.42990654205607476
+        },
+        {
+          "lower": 0.30000000000000004,
+          "upper": 0.4,
+          "count": 175,
+          "mean_score": 0.3478979378475838,
+          "observed_offensive_rate": 0.6114285714285714
+        },
+        {
+          "lower": 0.4,
+          "upper": 0.5,
+          "count": 104,
+          "mean_score": 0.44916080606897685,
+          "observed_offensive_rate": 0.7019230769230769
+        },
+        {
+          "lower": 0.5,
+          "upper": 0.6000000000000001,
+          "count": 52,
+          "mean_score": 0.5403398202544702,
+          "observed_offensive_rate": 0.9038461538461539
+        },
+        {
+          "lower": 0.6000000000000001,
+          "upper": 0.7000000000000001,
+          "count": 46,
+          "mean_score": 0.6511276478453233,
+          "observed_offensive_rate": 0.8913043478260869
+        },
+        {
+          "lower": 0.7000000000000001,
+          "upper": 0.8,
+          "count": 38,
+          "mean_score": 0.7451819669324035,
+          "observed_offensive_rate": 1.0
+        },
+        {
+          "lower": 0.8,
+          "upper": 0.9,
+          "count": 45,
+          "mean_score": 0.8502631108878558,
+          "observed_offensive_rate": 1.0
+        },
+        {
+          "lower": 0.9,
+          "upper": 1.0,
+          "count": 24,
+          "mean_score": 0.950567244744445,
+          "observed_offensive_rate": 1.0
+        }
+      ]
+    },
+    {
+      "name": "word_char_complement_nb",
+      "score_kind": "probability",
+      "threshold": 0.5000001404243241,
+      "threshold_selection": "Highest validation precision with offensive recall >= 70%",
+      "validation_examples": 970,
+      "accuracy": 0.7268041237113402,
+      "macro_f1": 0.7265922901259452,
+      "offensive_precision": 0.7369565217391304,
+      "offensive_recall": 0.7018633540372671,
+      "false_negative_rate": 0.2981366459627329,
+      "false_positive_rate": 0.24845995893223818,
+      "confusion_matrix_labels_0_1": [
+        [
+          366,
+          121
+        ],
+        [
+          144,
+          339
+        ]
+      ],
+      "per_class": {
+        "non_offensive": {
+          "precision": 0.7176470588235294,
+          "recall": 0.7515400410677618,
+          "f1-score": 0.7342026078234705,
+          "support": 487.0
+        },
+        "offensive": {
+          "precision": 0.7369565217391304,
+          "recall": 0.7018633540372671,
+          "f1-score": 0.71898197242842,
+          "support": 483.0
+        }
+      },
+      "config": {
+        "word_ngrams": [
+          1,
+          2
+        ],
+        "character_ngrams": [
+          2,
+          5
+        ],
+        "alpha": 0.5,
+        "norm": true,
+        "artifact": "models\\experiments\\word_char_complement_nb.joblib"
+      },
+      "brier_score_validation": 0.2499996061619811,
+      "expected_calibration_error_10_bins_validation": 0.22267983423798393,
+      "calibration_bins_validation": [
+        {
+          "lower": 0.4,
+          "upper": 0.5,
+          "count": 418,
+          "mean_score": 0.4999995077461441,
+          "observed_offensive_rate": 0.23923444976076555
+        },
+        {
+          "lower": 0.5,
+          "upper": 0.6000000000000001,
+          "count": 552,
+          "mean_score": 0.5000006431649344,
+          "observed_offensive_rate": 0.6938405797101449
+        }
+      ]
+    }
+  ],
+  "validation_macro_f1_leader": "clean_word_char_linear_svm",
+  "note": "Scores and thresholds are validation diagnostics, not TFGBV risk probabilities."
+}

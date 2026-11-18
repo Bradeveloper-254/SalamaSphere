@@ -1,0 +1,16 @@
+{
+    "model": "TF-IDF + Logistic Regression",
+    "selected_threshold": 0.3443635763272956,
+    "selection_reason": "Highest validation precision with recall >= 70%",
+    "test_f1_macro": 0.6842417539522477,
+    "test_confusion_matrix": [
+        [
+            310,
+            20
+        ],
+        [
+            169,
+            143
+        ]
+    ]
+}

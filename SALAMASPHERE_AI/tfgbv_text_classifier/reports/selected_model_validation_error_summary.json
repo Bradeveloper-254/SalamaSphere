@@ -1,0 +1,59 @@
+{
+  "split": "validation",
+  "threshold": -0.28189041864009656,
+  "score_kind": "decision_score",
+  "model": "models\\experiments\\clean_word_char_linear_svm.joblib",
+  "examples": 970,
+  "errors": 198,
+  "false_negatives": 144,
+  "false_positives": 54,
+  "confusion_matrix_labels_0_1": [
+    [
+      433,
+      54
+    ],
+    [
+      144,
+      339
+    ]
+  ],
+  "classification_report": {
+    "non_offensive": {
+      "precision": 0.7504332755632582,
+      "recall": 0.8891170431211499,
+      "f1-score": 0.8139097744360902,
+      "support": 487.0
+    },
+    "offensive": {
+      "precision": 0.8625954198473282,
+      "recall": 0.7018633540372671,
+      "f1-score": 0.773972602739726,
+      "support": 483.0
+    },
+    "accuracy": 0.7958762886597938,
+    "macro avg": {
+      "precision": 0.8065143477052932,
+      "recall": 0.7954901985792084,
+      "f1-score": 0.7939411885879082,
+      "support": 970.0
+    },
+    "weighted avg": {
+      "precision": 0.8062830855521302,
+      "recall": 0.7958762886597938,
+      "f1-score": 0.7940235332718182,
+      "support": 970.0
+    }
+  },
+  "error_length_characters": {
+    "median": 64.5,
+    "mean": 89.21212121212122
+  },
+  "error_length_words": {
+    "median": 10.0,
+    "mean": 14.43939393939394
+  },
+  "artifacts": {
+    "misclassified_rows": "reports\\selected_model_validation_misclassified.csv",
+    "aggregate_summary": "reports\\selected_model_validation_error_summary.json"
+  }
+}

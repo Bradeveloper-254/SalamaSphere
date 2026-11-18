@@ -1,0 +1,57 @@
+{
+  "split": "validation",
+  "threshold": 0.3443635763272956,
+  "examples": 970,
+  "errors": 216,
+  "false_negatives": 142,
+  "false_positives": 74,
+  "confusion_matrix_labels_0_1": [
+    [
+      413,
+      74
+    ],
+    [
+      142,
+      341
+    ]
+  ],
+  "classification_report": {
+    "non_offensive": {
+      "precision": 0.7441441441441441,
+      "recall": 0.8480492813141683,
+      "f1-score": 0.7927063339731286,
+      "support": 487.0
+    },
+    "offensive": {
+      "precision": 0.8216867469879519,
+      "recall": 0.7060041407867494,
+      "f1-score": 0.7594654788418709,
+      "support": 483.0
+    },
+    "accuracy": 0.777319587628866,
+    "macro avg": {
+      "precision": 0.782915445566048,
+      "recall": 0.777026711050459,
+      "f1-score": 0.7760859064074997,
+      "support": 970.0
+    },
+    "weighted avg": {
+      "precision": 0.7827555639106999,
+      "recall": 0.777319587628866,
+      "f1-score": 0.7761544442531312,
+      "support": 970.0
+    }
+  },
+  "error_length_characters": {
+    "median": 62.0,
+    "mean": 86.5324074074074
+  },
+  "error_length_words": {
+    "median": 10.0,
+    "mean": 13.99074074074074
+  },
+  "artifacts": {
+    "misclassified_rows": "reports\\validation_misclassified.csv",
+    "aggregate_summary": "reports\\validation_error_summary.json"
+  }
+}

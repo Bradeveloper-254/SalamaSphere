@@ -1,0 +1,59 @@
+{
+  "evaluation_status": "completed_once_after_validation_selection",
+  "model_name": "SalamaSphere Kiswahili offensive-language baseline",
+  "model_version": "swahili-offensive-linear-svm-clean-v1",
+  "artifact": "models/experiments/clean_word_char_linear_svm.joblib",
+  "test_examples": 642,
+  "threshold": -0.28189041864009656,
+  "score_type": "linear_svm_decision_function_margin",
+  "accuracy": 0.677570093457944,
+  "macro_f1": 0.6455356547484097,
+  "offensive_precision": 0.8832116788321168,
+  "offensive_recall": 0.38782051282051283,
+  "false_negative_rate": 0.6121794871794872,
+  "false_positive_rate": 0.048484848484848485,
+  "confusion_matrix_labels_0_1": [
+    [
+      314,
+      16
+    ],
+    [
+      191,
+      121
+    ]
+  ],
+  "per_class": {
+    "non_offensive": {
+      "precision": 0.6217821782178218,
+      "recall": 0.9515151515151515,
+      "f1-score": 0.7520958083832335,
+      "support": 330.0
+    },
+    "offensive": {
+      "precision": 0.8832116788321168,
+      "recall": 0.38782051282051283,
+      "f1-score": 0.5389755011135857,
+      "support": 312.0
+    }
+  },
+  "historical_comparison": {
+    "earlier_tuned_logistic_regression": {
+      "accuracy": 0.7056,
+      "macro_f1": 0.6842417539522477,
+      "offensive_precision": 0.8773006134969326,
+      "offensive_recall": 0.4583333333333333,
+      "confusion_matrix_labels_0_1": [[310, 20], [169, 143]],
+      "note": "Previously reported result on the same exposed test split; older artifact."
+    },
+    "earlier_linear_svm": {
+      "accuracy": 0.6666666666666666,
+      "macro_f1": 0.6284079106802838,
+      "offensive_precision": 0.8951612903225806,
+      "offensive_recall": 0.3557692307692308,
+      "confusion_matrix_labels_0_1": [[317, 13], [201, 111]],
+      "note": "Previously reported result on the same exposed test split; older artifact."
+    }
+  },
+  "test_independence_warning": "This test split was previously used for evaluation/error analysis of earlier model artifacts. These results are a single final descriptive evaluation, not an untouched independent estimate. Do not tune from these results.",
+  "tfgbv_limitation": "General offensive-language baseline; not validated as a TFGBV detector."
+}

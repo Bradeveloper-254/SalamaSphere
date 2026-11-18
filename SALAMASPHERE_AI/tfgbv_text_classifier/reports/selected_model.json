@@ -1,0 +1,28 @@
+{
+  "model_name": "SalamaSphere Kiswahili offensive-language baseline",
+  "model_version": "swahili-offensive-linear-svm-clean-v1",
+  "artifact": "models/experiments/clean_word_char_linear_svm.joblib",
+  "architecture": "Word and character TF-IDF FeatureUnion with LinearSVC",
+  "word_ngrams": [1, 2],
+  "character_analyzer": "char",
+  "character_ngrams": [2, 5],
+  "class_weight": "balanced",
+  "random_state": 42,
+  "selection_split": "validation",
+  "fit_split": "train",
+  "threshold": -0.28189041864009656,
+  "score_type": "linear_svm_decision_function_margin",
+  "threshold_selection": "Highest validation precision subject to offensive-class recall >= 0.70",
+  "validation_metrics": {
+    "macro_f1": 0.7939411885879082,
+    "offensive_precision": 0.8625954198473282,
+    "offensive_recall": 0.7018633540372671,
+    "accuracy": 0.7958762886597938,
+    "confusion_matrix_labels_0_1": [[433, 54], [144, 339]]
+  },
+  "limitations": [
+    "General offensive-language baseline, not validated for TFGBV detection.",
+    "Decision score is an unbounded margin, not a probability or real-world risk estimate.",
+    "Dataset labels and collection method do not provide a TFGBV annotation taxonomy."
+  ]
+}
