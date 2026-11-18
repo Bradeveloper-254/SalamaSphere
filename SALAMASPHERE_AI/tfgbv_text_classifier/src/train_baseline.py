@@ -10,11 +10,6 @@ from sklearn.pipeline import FeatureUnion, Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     classification_report,
-    confusion_matrix,
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -56,7 +51,6 @@ print("=" * 60)
 
 train_df = load_split("train")
 val_df = load_split("validation")
-test_df = load_split("test")
 
 X_train = train_df["text"]
 y_train = train_df["labels"]
@@ -64,13 +58,11 @@ y_train = train_df["labels"]
 X_val = val_df["text"]
 y_val = val_df["labels"]
 
-X_test = test_df["text"]
-y_test = test_df["labels"]
 
 print("\nDataset sizes:")
 print("Training:", len(train_df))
 print("Validation:", len(val_df))
-print("Testing:", len(test_df))
+print("Testing: not loaded by the training script")
 
 # Combine word and character features.
 features = FeatureUnion([
@@ -125,39 +117,18 @@ print(classification_report(
     zero_division=0
 ))
 
-# Final independent test evaluation
-test_predictions = model.predict(X_test)
-
-print("\nFINAL TEST RESULTS")
-print(classification_report(
-    y_test,
-    test_predictions,
-    target_names=["Non-offensive", "Offensive"],
-    zero_division=0
-))
-
 metrics = {
     "model": "TF-IDF + Logistic Regression",
     "dataset": "metabloit/offensive-swahili-text",
     "train_examples": len(train_df),
     "validation_examples": len(val_df),
-    "test_examples": len(test_df),
-    "accuracy": float(accuracy_score(y_test, test_predictions)),
-    "precision_macro": float(
-        precision_score(y_test, test_predictions,
-                        average="macro", zero_division=0)
+    "evaluation_split": "validation",
+    "validation_classification_report": classification_report(
+        y_val, val_predictions,
+        target_names=["Non-offensive", "Offensive"],
+        zero_division=0,
+        output_dict=True,
     ),
-    "recall_macro": float(
-        recall_score(y_test, test_predictions,
-                     average="macro", zero_division=0)
-    ),
-    "f1_macro": float(
-        f1_score(y_test, test_predictions,
-                 average="macro", zero_division=0)
-    ),
-    "confusion_matrix": confusion_matrix(
-        y_test, test_predictions
-    ).tolist()
 }
 
 model_path = MODEL_DIR / "salamasphere_swahili_baseline.joblib"
@@ -172,7 +143,7 @@ with open(report_path, "w", encoding="utf-8") as f:
 print("\nSaved model:", model_path)
 print("Saved metrics:", report_path)
 
-print("\nTEST METRICS")
+print("\nVALIDATION METRICS")
 print(json.dumps(metrics, indent=4))
 
 print("\nBASELINE TRAINING COMPLETED")

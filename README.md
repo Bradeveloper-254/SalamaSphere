@@ -53,7 +53,7 @@ contacts.
 ## Project Structure
 
 - backend/: Server-side application.
-- mobile/: Mobile application.
+- `mobile/`: companion Flutter application, maintained in the separate `SalamaSphere_Flutter` repository.
 - SalamaSphere_device/: Active integrated wearable sketch, hardware inventory, and legacy device prototypes.
 - wearable/: Wearable firmware.
 - web/: Web interface resources.
@@ -74,11 +74,14 @@ keep that mirror synchronized with this firmware file.
 
 ## Development Status
 
-Day 1: Project planning and architecture.
+| Status | Verified scope |
+|---|---|
+| Implemented in this repository | Django incident/evidence APIs, encrypted evidence storage and SHA-256 verification, transcript retrieval/review, SOS notification workflows, backend tests, and ESP32 wearable firmware. |
+| Implemented but not verified in this workspace | Companion Flutter app. It is maintained in a separate repository and is not checked out here. |
+| Research prototype | Kiswahili general offensive-language text classifier in `SALAMASPHERE_AI/`. It is not a TFGBV detector and is not integrated into the application. |
+| Planned | Ethically governed TFGBV dataset work and any future TFGBV model research. |
 
-Subsequent milestones include backend development,
-wearable programming, mobile integration, evidence
-preservation, notifications, and testing.
+Automated tests do not verify delivery through live SMS, voice, or speech providers. See `docs/security_and_data_handling.md` for repository data handling and review limits.
 
 ## Security and Privacy
 
@@ -155,35 +158,6 @@ answered, completed, and failed outcomes.
 See the docs/ directory for requirements, architecture,
 API planning, and testing documentation.
 
-
-## Development Status
-
-### Day 1
-- Project structure established.
-- Initial system requirements documented.
-- Software architecture documented.
-- Git repository configured.
-
-### Day 2
-- Django project created.
-- Django REST Framework installed.
-- PostgreSQL configured.
-- Custom user model implemented.
-- Wearable device model implemented.
-- Incident model implemented.
-- Evidence model implemented.
-- Notification model implemented.
-- Threat assessment model implemented.
-- Django administration configured.
-- Initial automated tests created.
-
-### Next Milestones
-- Device registration and authentication.
-- Incident management APIs.
-- Evidence upload and integrity verification.
-- Notification integration.
-- Mobile application integration.
-- Wearable firmware development.
 
 ## Device BLE Protocol UUIDs
 

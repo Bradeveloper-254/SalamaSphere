@@ -684,7 +684,7 @@ class EvidenceVerificationView(APIView):
                 })
 
         all_verified = all(
-            item["verification_status"] == "verified"
+            item.get("matches", False)
             for item in results
         )
 
@@ -877,6 +877,9 @@ class EvidenceTranscriptionView(APIView):
             }, status=201)
         except FileNotFoundError:
             error_code = "evidence_unavailable"
+        except EvidenceIntegrityError:
+            mark_evidence_verified(evidence, matches=False)
+            error_code = "evidence_integrity_failed"
         except TranscriptionError as exc:
             error_code = exc.code
         except Exception:

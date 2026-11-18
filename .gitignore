@@ -55,3 +55,6 @@ private_media/
 *.wav
 *.mp3
 *.m4a
+# Locally retained TFGBV/offensive text datasets and text-bearing error reports
+SALAMASPHERE_AI/tfgbv_text_classifier/Data/processed/*.csv
+SALAMASPHERE_AI/tfgbv_text_classifier/reports/*misclassified*.csv

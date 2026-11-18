@@ -6,7 +6,9 @@ Submit JSON `{ "language": "auto" }` for automatic detection, or `sw` / `en` for
 
 Configure `OPENAI_API_KEY` and optionally `SPEECH_TO_TEXT_MODEL` (defaults to `whisper-1`) on the backend. Apply migrations with `python manage.py migrate`. Audio is sent to the configured speech provider; account and provider data handling requirements should be reviewed before production use. No audio or transcript is written to application logs.
 
-The transcript is returned to the authorized caller and is stored in the database. This first version has no transcript review/edit endpoint or background job; requests run synchronously and are subject to application/provider request timeouts. Recognition can be inaccurate, especially for code-switching, noise, and Sheng.
+The transcript is returned to the authorized caller and is stored in the database. Authorized users can retrieve a transcript history with `GET /api/evidence/<evidence_id>/transcripts/` and submit a human correction with `PUT /api/transcripts/<transcript_id>/review/` and `{ "transcript": "corrected words" }`. Corrections are stored separately; the original machine transcript remains unchanged and each correction is retained in revision history. Requests run synchronously and are subject to application/provider request timeouts. Recognition can be inaccurate, especially for code-switching, noise, and Sheng.
+
+The companion Flutter repository is separate and is not checked out in this workspace. Flutter integration was therefore not locally inspected or tested as part of this review.
 
 ## Demonstration
 

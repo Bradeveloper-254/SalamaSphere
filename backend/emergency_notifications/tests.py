@@ -796,6 +796,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         ringing = client.post(
             endpoint,
             {"sessionId": "AT-SESSION-2", "status": "Ringing"},
+            format="json",
         )
         self.assertEqual(ringing.status_code, 200)
         notification.refresh_from_db()
@@ -808,6 +809,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
                 "status": "Bridged",
                 "isActive": "1",
             },
+            format="json",
         )
         self.assertEqual(answered.status_code, 200)
         self.assertEqual(answered.content, b"OK")
@@ -817,6 +819,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         completed = client.post(
             endpoint,
             {"sessionId": "AT-SESSION-2", "status": "Completed"},
+            format="json",
         )
         self.assertEqual(completed.status_code, 200)
         notification.refresh_from_db()
@@ -828,6 +831,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         replayed = client.post(
             endpoint,
             {"sessionId": "AT-SESSION-2", "status": "Ringing"},
+            format="json",
         )
         self.assertEqual(replayed.status_code, 200)
         notification.refresh_from_db()
@@ -854,6 +858,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
                 "clientRequestId": "request-early-1",
                 "status": "Dialing",
             },
+            format="json",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -875,6 +880,7 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
             reverse("africas-talking-voice-control")
             + "?token=callback-secret",
             {"sessionId": "AT-ACTIVE-1", "isActive": "1"},
+            format="json",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -891,12 +897,14 @@ class VoiceNotificationTests(EmergencyNotificationTestBase):
         unauthorized = client.post(
             endpoint + "?token=wrong",
             {"sessionId": "AT-SESSION-3", "status": "Answered"},
+            format="json",
         )
         self.assertEqual(unauthorized.status_code, 403)
 
         missing = client.post(
             endpoint + "?token=callback-secret",
             {"sessionId": "AT-UNKNOWN", "status": "Answered"},
+            format="json",
         )
         self.assertEqual(missing.status_code, 200)
 

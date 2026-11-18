@@ -12,9 +12,6 @@ from sklearn.svm import LinearSVC
 from sklearn.metrics import (
     precision_recall_curve,
     classification_report,
-    confusion_matrix,
-    accuracy_score,
-    f1_score
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -41,7 +38,6 @@ print("=" * 60)
 
 X_train, y_train = load_data("train")
 X_val, y_val = load_data("validation")
-X_test, y_test = load_data("test")
 
 features = FeatureUnion([
     ("word", TfidfVectorizer(
@@ -116,29 +112,17 @@ print(classification_report(
     zero_division=0
 ))
 
-# Evaluate on test set only after selecting the threshold
-test_scores = model.decision_function(X_test)
-test_predictions = (test_scores >= threshold).astype(int)
-
-print("\nFINAL TEST RESULTS")
-print(classification_report(
-    y_test,
-    test_predictions,
-    target_names=["Non-offensive", "Offensive"],
-    zero_division=0
-))
-
 metrics = {
     "model": "TF-IDF + Linear SVM",
     "threshold": threshold,
     "selection_reason": reason,
-    "accuracy": float(accuracy_score(y_test, test_predictions)),
-    "macro_f1": float(
-        f1_score(y_test, test_predictions, average="macro")
+    "evaluation_split": "validation",
+    "validation_examples": int(len(y_val)),
+    "validation_classification_report": classification_report(
+        y_val, val_predictions,
+        target_names=["Non-offensive", "Offensive"],
+        zero_division=0, output_dict=True,
     ),
-    "confusion_matrix": confusion_matrix(
-        y_test, test_predictions
-    ).tolist()
 }
 
 joblib.dump(
@@ -153,7 +137,7 @@ with open(
 ) as f:
     json.dump(metrics, f, indent=4)
 
-print("\nFINAL SVM METRICS")
+print("\nVALIDATION SVM METRICS")
 print(json.dumps(metrics, indent=4))
 
 print("\nSVM EXPERIMENT COMPLETED")

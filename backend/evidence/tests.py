@@ -395,7 +395,7 @@ class IncidentEvidenceApiTests(TestCase):
             description="Different incident",
             occurred_at=timezone.now(),
         )
-        response = self.client.post(
+        response = self.client.get(
             reverse("evidence-verify", kwargs={"incident_id": other_incident.id})
         )
         self.assertEqual(response.status_code, 404)

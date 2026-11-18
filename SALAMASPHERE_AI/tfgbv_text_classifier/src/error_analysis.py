@@ -15,7 +15,7 @@ REPORT_DIR = BASE_DIR / "reports"
 MODEL_PATH = MODEL_DIR / "salamasphere_swahili_baseline.joblib"
 THRESHOLD_PATH = REPORT_DIR / "threshold_experiment.json"
 
-df = pd.read_csv(DATA_DIR / "test.csv")
+df = pd.read_csv(DATA_DIR / "validation.csv")
 df = df.dropna(subset=["text", "labels"]).copy()
 
 with open(THRESHOLD_PATH, encoding="utf-8") as f:
@@ -65,8 +65,9 @@ print(
 
 # Save an aggregate report without message content.
 summary = {
+    "evaluation_split": "validation",
     "threshold": float(threshold),
-    "total_test_examples": int(len(df)),
+    "total_validation_examples": int(len(df)),
     "false_negatives": int(
         (df["error_type"] == "false_negative").sum()
     ),
