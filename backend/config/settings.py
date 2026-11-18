@@ -36,6 +36,13 @@ EVIDENCE_ENCRYPTION_KEY = env(
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
 SPEECH_TO_TEXT_MODEL = env("SPEECH_TO_TEXT_MODEL", default="whisper-1")
 
+# Experimental incident threat assessment is separate from emergency flows
+# and remains disabled until its methodology and intended use are approved.
+EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED = env.bool(
+    "EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED",
+    default=False,
+)
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 

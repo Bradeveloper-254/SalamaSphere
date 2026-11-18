@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -68,6 +69,12 @@ class ThreatAssessmentCreateView(APIView):
 
     @transaction.atomic
     def post(self, request, incident_id):
+
+        if not settings.EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED:
+            return Response(
+                {"detail": "Experimental threat assessment is unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         serializer = ThreatAssessmentCreateSerializer(
             data=request.data
@@ -150,6 +157,12 @@ class ThreatAssessmentReviewView(APIView):
 
     @transaction.atomic
     def post(self, request, assessment_id):
+
+        if not settings.EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED:
+            return Response(
+                {"detail": "Experimental threat assessment is unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         serializer = ThreatAssessmentReviewSerializer(
             data=request.data

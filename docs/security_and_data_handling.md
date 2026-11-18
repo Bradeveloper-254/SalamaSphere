@@ -6,17 +6,11 @@ This review covers the checked out SalamaSphere repository and the current publi
 
 The backend has authentication and ownership checks for evidence, encrypted evidence storage, SHA-256 verification, access audit records, transcript retrieval and human correction endpoints, and a mocked-provider transcription test suite. SOS notification services and callbacks are implemented in source; they are not proof of delivery through live SMS or voice providers. The AI project is an experimental general offensive-language baseline, not a TFGBV detector.
 
-## Public repository data cleanup
+## Dataset and text-bearing reports
 
-The following tracked files contain raw user-generated forum messages or excerpts and are removed from the Git index. Their local copies are retained and ignored for future staging:
+The current Git index audit found the three processed split CSVs are not tracked; matching local files are ignored by `.gitignore`. The two validation misclassification CSV reports are tracked in the current `HEAD`. They contain source text and should be treated as restricted research artifacts. This finding corrects earlier wording in this document that said they had been removed from the Git index. Do not print, copy, or publish their rows. Their blobs also occur in repository history. No history rewrite or remote change was performed in this work; coordinate any history cleanup separately.
 
-- `SALAMASPHERE_AI/tfgbv_text_classifier/Data/processed/train.csv` — full message text in training examples.
-- `SALAMASPHERE_AI/tfgbv_text_classifier/Data/processed/validation.csv` — full message text in validation examples.
-- `SALAMASPHERE_AI/tfgbv_text_classifier/Data/processed/test.csv` — full message text in held-out examples.
-- `SALAMASPHERE_AI/tfgbv_text_classifier/reports/validation_misclassified.csv` — text-bearing prediction errors.
-- `SALAMASPHERE_AI/tfgbv_text_classifier/reports/selected_model_validation_misclassified.csv` — text-bearing prediction errors.
-
-The dataset card declares MIT, but says the posts were scraped from JamiiForums. The uploader's declaration does not establish rights to redistribute each underlying post. Until source-site terms and privacy/rights questions are resolved, public redistribution is not justified. The five files remain available in this local checkout for authorized research. Their Git blobs remain accessible in existing history and on clones until a separately planned history rewrite is approved and coordinated; no history was rewritten and no remote change was made here.
+The dataset card declares MIT, but says the posts were scraped from JamiiForums. The uploader's declaration does not establish rights to redistribute each underlying post. Until source-site terms and privacy/rights questions are resolved, public redistribution is not justified. Keep local copies restricted to authorized research and reassess artifact provenance before distribution.
 
 Aggregate metrics, model code, source instructions, and non-text-bearing reports remain tracked. Model artifacts remain because they are needed for local inference and do not contain the source rows directly. Reassess artifact provenance and licensing before distribution or deployment.
 

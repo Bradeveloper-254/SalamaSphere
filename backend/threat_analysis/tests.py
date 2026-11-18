@@ -1,4 +1,4 @@
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -98,6 +98,7 @@ class ThreatAssessmentServiceTests(SimpleTestCase):
         self.assertIn("kill me", result["keyword_matches"]["high"])
 
 
+@override_settings(EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED=True)
 class ThreatAssessmentApiTests(TestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -119,6 +120,40 @@ class ThreatAssessmentApiTests(TestCase):
             occurred_at=timezone.now(),
         )
         self.client = APIClient()
+
+    @override_settings(EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED=False)
+    def test_create_endpoint_is_disabled_by_default_configuration(self):
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.post(
+            reverse(
+                "threat-assessment-create",
+                kwargs={"incident_id": self.incident.id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.data["detail"],
+            "Experimental threat assessment is unavailable.",
+        )
+
+    @override_settings(EXPERIMENTAL_THREAT_ASSESSMENT_ENABLED=False)
+    def test_review_endpoint_is_disabled_by_default_configuration(self):
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.post(
+            reverse(
+                "threat-assessment-review",
+                kwargs={"assessment_id": "00000000-0000-0000-0000-000000000000"},
+            ),
+            {"action": "accept"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 503)
 
     def test_owner_can_create_assessment_for_owned_incident(self):
         self.client.force_authenticate(user=self.owner)
