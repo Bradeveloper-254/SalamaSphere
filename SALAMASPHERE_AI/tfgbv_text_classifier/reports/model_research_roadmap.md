@@ -1,35 +1,39 @@
-# TFGBV model research roadmap
+# TFGBV research roadmap
 
-**Current state:** the available model is a local Kiswahili general offensive-language baseline. It is not a TFGBV detector, multilingual model, calibrated risk estimate, or production feature. No additional classifier, acoustic distress detector, or risk fusion engine is part of this milestone.
+**Status:** Future research plan; no TFGBV data collection, model training, or deployment is authorized by this roadmap. See [research protocol](tfgbv_research_protocol.md), [pilot plan](pilot_study_plan.md), and [readiness report](milestone_2_readiness_report.md).
 
-## Stage 0 — stabilize and govern (current)
+## Current state
 
-- Keep text-bearing data local; keep scripts, aggregate reports, and documentation in source control.
-- Maintain source/license uncertainty for the JamiiForums-derived dataset; do not redistribute it until rights are reviewed.
-- Preserve the existing model as a research baseline, with its warning and score semantics.
-- Keep evaluation-only test data out of iterative scripts. The test split has prior exposure, so existing metrics are descriptive only.
+The available model is a local Kiswahili general offensive-language baseline. It is not a TFGBV detector, multilingual model, calibrated risk estimate, or production feature. Its existing test split was previously examined; reported metrics are descriptive, not an untouched independent estimate. See the [model card](model_card.md) and [final evaluation](final_model_evaluation.md). No TFGBV-specific corpus or pilot results are documented.
 
-## Stage 1 — protocol and data readiness
+## Stage 0 — protocol and governance preparation (current milestone)
 
-- Obtain ethics, privacy, source permission, consent, and safety review before collecting new TFGBV material.
-- Pilot the annotation draft with Kiswahili, English, Sheng, GBV, privacy, and compensated community experts.
-- Define intended-use limits, label inclusion/exclusion criteria, context requirements, and incident response.
-- Establish secure access, retention/deletion, source provenance, and annotator wellbeing procedures.
+- Maintain the research protocol, operational annotation draft, schema, source register, checklist, pilot plan, and risk register as versioned review documents.
+- Keep sensitive text, transcripts, incident evidence, and text-bearing error samples private; do not add sensitive data to public Git.
+- Do not collect, scrape, download, annotate, or train during this stage.
+- Keep all research outside SOS and emergency-response functionality.
 
-## Stage 2 — curated corpus and baseline evaluation
+## Stage 1 — independent review and authorization (future, conditional)
 
-- Collect only approved, minimized examples under the approved protocol.
-- Annotate multilabel behavior with independent votes and adjudication; retain uncertainty and provenance.
-- De-duplicate and split by author/thread/time where lawful; reserve a truly untouched external test set.
-- Compare transparent baselines and language-specific approaches using validation only; report classwise and language-wise errors, confidence intervals where appropriate, and calibration only for calibrated outputs.
+- Obtain supervisor/institutional ethics determination and applicable legal/privacy review.
+- Approve each source and each intended use in the source register; resolve provenance, terms, consent, copyright, privacy and retention.
+- Confirm secure storage, access, encryption, deletion and incident response.
+- Review taxonomy and language coverage with GBV practitioners and qualified Kiswahili, English, Sheng and bilingual experts.
+- Confirm annotator training, wellbeing support, workload limits and resources.
 
-## Stage 3 — human-centered research evaluation
+## Stage 2 — controlled annotation pilot (future, conditional)
 
-- Conduct privacy and memorization review, subgroup/language analysis, misuse assessment, and practitioner review.
-- Test abstention and uncertainty behavior; document where context is insufficient.
-- Evaluate whether a model adds value to trained human review without delaying support or increasing harm.
-- Use controlled research access until rights and release risks are resolved.
+- If separately approved, execute the proposed small pilot under the protocol and report agreement, uncertainty, workload, language coverage, privacy safeguard performance and adjudication themes.
+- Revise taxonomy/guidelines transparently and make a documented go/no-go decision. Do not treat pilot results as prevalence estimates or model validation.
 
-## Stage 4 — separate approval for any product integration
+## Stage 3 — TFGBV-specific model research (future, separate approval)
 
-Product integration requires a new review of threat model, consent, data minimization, latency, accessibility, model monitoring, rollback, incident response, and user-facing explanation. Model outputs must never establish credibility, predict survivor behavior, rank service eligibility, or suppress an SOS or support request. A classifier, acoustic model, and any fusion logic require separate evidence and approvals; none is implied by this roadmap.
+Only after approved data and a formal go decision, consider multilabel classification and compare transparent baselines (majority/prior, TF-IDF with linear logistic or SVM) before multilingual transformer candidates such as XLM-R where justified. Evaluate language-specific and code-switch performance, per-label false positives/negatives, calibration, uncertainty/abstention, reviewer-facing explanations, subgroup/source differences, privacy/memorization, compute, model size, inference latency and offline feasibility. Keep the final test isolated from iterative model selection. Explainability supports review; it does not prove causal reasoning or correctness.
+
+## Stage 4 — human-centered and misuse evaluation (future, separate approval)
+
+Assess whether a model adds value to trained human review without increasing harm. Evaluate false-positive and false-negative consequences, subgroup gaps, over-reliance, misuse, privacy, uncertainty and withdrawal/appeal paths. Use controlled access until rights and release risks are resolved. Do not use model output to establish credibility, predict survivor behavior, rank service eligibility, or suppress support.
+
+## Stage 5 — separate product review (not authorized)
+
+Any product integration requires its own evidence and approval covering consent, threat model, data minimization, latency, accessibility, human oversight, monitoring, rollback, incident handling and user-facing explanation. Research outputs must never block, delay, cancel, downgrade or override SOS activation, notification delivery, evidence recording, emergency calls, trusted contacts or access to help. No integration work is part of this roadmap's current milestone.
