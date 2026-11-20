@@ -15,7 +15,7 @@ from emergency_notifications.models import EmergencyNotification
 from notifications.models import Notification
 from threat_analysis.models import ThreatAssessment
 from trusted_contacts.models import TrustedContact
-from .models import Incident
+from .models import Incident, IncidentLocation
 
 
 class IncidentAPITest(TestCase):
@@ -496,3 +496,93 @@ class IncidentModelTests(TestCase):
         )
 
         self.assertEqual(incident.user, self.user)
+
+
+class IncidentLocationAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.owner = User.objects.create_user(
+            username="location_owner",
+            email="location_owner@example.com",
+            password="TestPassword123!",
+        )
+        self.other_user = User.objects.create_user(
+            username="location_other",
+            email="location_other@example.com",
+            password="TestPassword123!",
+        )
+        self.incident = Incident.objects.create(
+            user=self.owner,
+            source=Incident.IncidentSource.MOBILE,
+            is_sos=True,
+            occurred_at=timezone.now(),
+        )
+        self.endpoint = reverse(
+            "incident-location-history",
+            kwargs={"incident_id": self.incident.pk},
+        )
+        self.client.force_authenticate(user=self.owner)
+
+    def _payload(self, **overrides):
+        return {
+            "client_location_id": str(uuid.uuid4()),
+            "latitude": -1.2921,
+            "longitude": 36.8219,
+            "accuracy_m": 8.2,
+            "captured_at": timezone.now().isoformat(),
+            "speed_mps": 1.5,
+            "bearing_degrees": 92.0,
+            "source": "phone_gps",
+            **overrides,
+        }
+
+    def test_owner_can_append_location_and_latest_fields_update(self):
+        response = self.client.post(self.endpoint, self._payload(), format="json")
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(IncidentLocation.objects.filter(incident=self.incident).count(), 1)
+        self.incident.refresh_from_db()
+        self.assertEqual(float(self.incident.latitude), -1.2921)
+        self.assertEqual(float(self.incident.longitude), 36.8219)
+        self.assertIsNotNone(self.incident.location_captured_at)
+
+        latest = self.client.get(reverse(
+            "incident-location-latest",
+            kwargs={"incident_id": self.incident.pk},
+        ))
+        self.assertEqual(latest.status_code, 200)
+        self.assertEqual(latest.data["latest"]["id"], response.data["id"])
+        self.assertFalse(latest.data["is_stale"])
+
+    def test_duplicate_client_location_id_is_idempotent(self):
+        payload = self._payload()
+        first = self.client.post(self.endpoint, payload, format="json")
+        second = self.client.post(self.endpoint, payload, format="json")
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.data["id"], second.data["id"])
+        self.assertEqual(IncidentLocation.objects.filter(incident=self.incident).count(), 1)
+
+    def test_other_user_cannot_read_or_write_incident_location(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        write = self.client.post(self.endpoint, self._payload(), format="json")
+        read = self.client.get(self.endpoint)
+
+        self.assertEqual(write.status_code, 404)
+        self.assertEqual(read.status_code, 404)
+
+    def test_closed_incident_rejects_updates(self):
+        self.incident.status = Incident.IncidentStatus.CLOSED
+        self.incident.save(update_fields=["status"])
+        response = self.client.post(self.endpoint, self._payload(), format="json")
+        self.assertEqual(response.status_code, 409)
+
+    def test_rejects_future_timestamp(self):
+        response = self.client.post(
+            self.endpoint,
+            self._payload(captured_at=(timezone.now() + timedelta(hours=1)).isoformat()),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)

@@ -9,6 +9,7 @@ from .views import (
 from .views import (
     AuthorityAssignedIncidentListView,
     IncidentDetailView,
+    IncidentLocationView,
     IncidentListCreateView,
 )
 
@@ -22,6 +23,17 @@ urlpatterns = [
         "authority/assigned/",
         AuthorityAssignedIncidentListView.as_view(),
         name="authority-assigned-incidents",
+    ),
+    path(
+        "<uuid:incident_id>/locations/latest/",
+        IncidentLocationView.as_view(),
+        {"latest": True},
+        name="incident-location-latest",
+    ),
+    path(
+        "<uuid:incident_id>/locations/",
+        IncidentLocationView.as_view(),
+        name="incident-location-history",
     ),
     path(
         "authority/presence/",

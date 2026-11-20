@@ -1,5 +1,6 @@
 import math
 import uuid
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from rest_framework import serializers
@@ -7,8 +8,9 @@ from rest_framework import serializers
 from devices.models import WearableDevice
 from .models import Incident
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
-from .models import Incident, IncidentAssignment
+from .models import Incident, IncidentAssignment, IncidentLocation
 
 
 class CoordinateField(serializers.DecimalField):
@@ -77,6 +79,7 @@ class IncidentSerializer(serializers.ModelSerializer):
             "audio_available",
             "location_accuracy_m",
             "location_source",
+            "location_captured_at",
             "status",
             "sync_received_at",
             "created_at",
@@ -244,6 +247,7 @@ class AuthorityIncidentSerializer(serializers.ModelSerializer):
             "audio_available",
             "location_accuracy_m",
             "location_source",
+            "location_captured_at",
         ]
         read_only_fields = fields
 
@@ -255,6 +259,72 @@ class AuthorityIncidentSerializer(serializers.ModelSerializer):
             evidence.evidence_type == "audio"
             for evidence in incident.evidence_files.all()
         )
+
+
+class IncidentLocationSerializer(serializers.ModelSerializer):
+    latitude = CoordinateField(max_digits=9, decimal_places=6)
+    longitude = CoordinateField(max_digits=9, decimal_places=6)
+
+    class Meta:
+        model = IncidentLocation
+        fields = [
+            "id",
+            "client_location_id",
+            "latitude",
+            "longitude",
+            "accuracy_m",
+            "captured_at",
+            "speed_mps",
+            "bearing_degrees",
+            "source",
+            "received_at",
+        ]
+        read_only_fields = ["id", "received_at"]
+
+    def validate_latitude(self, value):
+        if not -90 <= value <= 90:
+            raise serializers.ValidationError("Latitude is out of range.")
+        return value
+
+    def validate_longitude(self, value):
+        if not -180 <= value <= 180:
+            raise serializers.ValidationError("Longitude is out of range.")
+        return value
+
+    def validate_accuracy_m(self, value):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise serializers.ValidationError(
+                "Accuracy must be finite and non-negative."
+            )
+        return value
+
+    def validate_speed_mps(self, value):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise serializers.ValidationError(
+                "Speed must be finite and non-negative."
+            )
+        return value
+
+    def validate_bearing_degrees(self, value):
+        if value is not None and (
+            not math.isfinite(value) or not 0 <= value < 360
+        ):
+            raise serializers.ValidationError(
+                "Bearing must be between 0 and 360 degrees."
+            )
+        return value
+
+    def validate_captured_at(self, value):
+        now = timezone.now()
+        if value > now + timedelta(minutes=5):
+            raise serializers.ValidationError(
+                "Location timestamp is too far in the future."
+            )
+        if value < now - timedelta(days=30):
+            raise serializers.ValidationError(
+                "Location timestamp is outside the accepted sync window."
+            )
+        return value
 
 
 class IncidentAssignmentCreateSerializer(serializers.Serializer):

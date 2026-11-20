@@ -14,6 +14,7 @@ from rest_framework.permissions import (
     IsAuthenticated,
 )
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from devices.models import WearableDevice
@@ -30,10 +31,11 @@ from notifications.services import (
     notify_new_incident,
 )
 
-from .models import Incident, IncidentAssignment
+from .models import Incident, IncidentAssignment, IncidentLocation
 from .serializers import (
     AuthorityIncidentSerializer,
     IncidentAssignmentCreateSerializer,
+    IncidentLocationSerializer,
     IncidentSerializer,
 )
 from threat_analysis.models import ThreatAssessment
@@ -229,6 +231,11 @@ class IncidentDetailView(generics.RetrieveUpdateAPIView):
                 "The SOS status cannot be changed after "
                 "incident creation."
             ),
+            "latitude": "Use the incident location endpoint to update GPS.",
+            "longitude": "Use the incident location endpoint to update GPS.",
+            "location_accuracy_m": "Use the incident location endpoint to update GPS.",
+            "location_source": "Use the incident location endpoint to update GPS.",
+            "location_captured_at": "Use the incident location endpoint to update GPS.",
         }
 
         for field, message in protected_fields.items():
@@ -239,6 +246,132 @@ class IncidentDetailView(generics.RetrieveUpdateAPIView):
                 )
 
         return super().update(request, *args, **kwargs)
+
+
+class IncidentLocationView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "incident_location_write"
+    latest = False
+
+    def _authorized_incident(self, request, incident_id):
+        user = request.user
+        queryset = Incident.objects.select_related("user")
+        if not is_incident_admin(user):
+            queryset = queryset.filter(
+                Q(user=user)
+                | Q(
+                    authority_assignments__authority=user,
+                    authority_assignments__is_active=True,
+                )
+            )
+        return queryset.filter(pk=incident_id).first()
+
+    def get(self, request, incident_id, latest=False):
+        incident = self._authorized_incident(request, incident_id)
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        locations = incident.location_history.all()
+        if latest:
+            location = locations.first()
+            stale = (
+                location is None
+                or location.captured_at < timezone.now() - timedelta(minutes=5)
+            )
+            return Response({
+                "incident_id": str(incident.pk),
+                "latest": (
+                    IncidentLocationSerializer(location).data
+                    if location is not None
+                    else None
+                ),
+                "is_stale": stale,
+            })
+
+        before = request.query_params.get("before")
+        if before:
+            from django.utils.dateparse import parse_datetime
+
+            before_value = parse_datetime(before)
+            if before_value is None or timezone.is_naive(before_value):
+                return Response(
+                    {"before": ["Provide an ISO-8601 timezone-aware timestamp."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            locations = locations.filter(captured_at__lt=before_value)
+        try:
+            limit = int(request.query_params.get("limit", 100))
+        except (TypeError, ValueError):
+            return Response(
+                {"limit": ["Limit must be an integer."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        limit = min(max(limit, 1), 500)
+        page = list(locations.order_by("-captured_at", "-received_at")[:limit + 1])
+        has_more = len(page) > limit
+        page = page[:limit]
+        next_before = page[-1].captured_at.isoformat() if has_more and page else None
+        page.sort(key=lambda item: (item.captured_at, item.received_at))
+        return Response({
+            "incident_id": str(incident.pk),
+            "results": IncidentLocationSerializer(page, many=True).data,
+            "next_before": next_before,
+        })
+
+    def post(self, request, incident_id, latest=False):
+        incident = Incident.objects.filter(
+            pk=incident_id,
+            user=request.user,
+        ).first()
+        if incident is None:
+            return Response(
+                {"detail": "Incident not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not incident.is_sos or incident.status == Incident.IncidentStatus.CLOSED:
+            return Response(
+                {"detail": "Location updates require an active SOS incident."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = IncidentLocationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        client_location_id = serializer.validated_data["client_location_id"]
+        existing = IncidentLocation.objects.filter(
+            incident=incident,
+            client_location_id=client_location_id,
+        ).first()
+        if existing is not None:
+            return Response(
+                IncidentLocationSerializer(existing).data,
+                status=status.HTTP_200_OK,
+            )
+
+        location = serializer.save(incident=incident)
+        if (
+            incident.location_captured_at is None
+            or location.captured_at > incident.location_captured_at
+        ):
+            incident.latitude = location.latitude
+            incident.longitude = location.longitude
+            incident.location_accuracy_m = location.accuracy_m
+            incident.location_source = location.source
+            incident.location_captured_at = location.captured_at
+            incident.save(update_fields=[
+                "latitude",
+                "longitude",
+                "location_accuracy_m",
+                "location_source",
+                "location_captured_at",
+                "updated_at",
+            ])
+        return Response(
+            IncidentLocationSerializer(location).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class IsApprovedAuthority(BasePermission):

@@ -188,6 +188,9 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
+    "DEFAULT_THROTTLE_RATES": {
+        "incident_location_write": "30/minute",
+    },
 }
 
 

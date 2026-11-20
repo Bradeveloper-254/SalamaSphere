@@ -91,6 +91,8 @@ class Incident(models.Model):
         blank=True,
     )
 
+    location_captured_at = models.DateTimeField(null=True, blank=True)
+
     status = models.CharField(
         max_length=20,
         choices=IncidentStatus.choices,
@@ -140,6 +142,45 @@ class Incident(models.Model):
     
     
     
+
+
+class IncidentLocation(models.Model):
+    """Append-only location samples for an active SOS incident."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    incident = models.ForeignKey(
+        Incident,
+        on_delete=models.PROTECT,
+        related_name="location_history",
+    )
+    client_location_id = models.UUIDField()
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    captured_at = models.DateTimeField()
+    speed_mps = models.FloatField(null=True, blank=True)
+    bearing_degrees = models.FloatField(null=True, blank=True)
+    source = models.CharField(max_length=30, default="phone_gps")
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-captured_at", "-received_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["incident", "client_location_id"],
+                name="unique_incident_client_location",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["incident", "-captured_at"],
+                name="incident_loc_time_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.incident_id} @ {self.captured_at.isoformat()}"
+
 
 class IncidentAssignment(models.Model):
     """
