@@ -65,7 +65,9 @@ class AfricasTalkingVoiceControlView(AfricasTalkingCallbackBase):
                 if settings.AT_VOICE_TEST_ANNOUNCEMENT
                 else "This is an automated SalamaSphere emergency alert. "
                 "A person who listed you as a trusted contact needs help. "
-                "Please contact them as soon as possible."
+                "Please contact them as soon as possible or try reaching out to them if you can. you can also check your sms messages for more information."
+                "sms messages has location information and other details."
+                "Thank you for your time."
             )
             announcement = escape(announcement)
             return HttpResponse(
