@@ -1,5 +1,7 @@
 
 from datetime import timedelta
+from hashlib import sha256
+import secrets
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
@@ -31,12 +33,14 @@ from notifications.services import (
     notify_new_incident,
 )
 
-from .models import Incident, IncidentAssignment, IncidentLocation
+from .models import Incident, IncidentAssignment, IncidentLocation, LiveAudioSession, LiveAudioSignal
 from .serializers import (
     AuthorityIncidentSerializer,
     IncidentAssignmentCreateSerializer,
     IncidentLocationSerializer,
     IncidentSerializer,
+    LiveAudioSessionSerializer,
+    LiveAudioSignalSerializer,
 )
 from threat_analysis.models import ThreatAssessment
 from threat_analysis.services import assess_incident
@@ -50,6 +54,99 @@ def is_incident_admin(user):
         and user.is_staff
         and user.role == User.Role.ADMIN
     )
+
+
+def _live_audio_incident_for_user(user, incident_id):
+    queryset = Incident.objects.filter(pk=incident_id, is_sos=True).select_related("user")
+    if is_incident_admin(user):
+        return queryset.first()
+    return queryset.filter(
+        Q(user=user) | Q(authority_assignments__authority=user, authority_assignments__is_active=True)
+    ).distinct().first()
+
+
+def _token_hash(value):
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+class LiveAudioSessionView(APIView):
+    """Authenticated WebRTC signalling authorization. Never transports audio."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "live_audio"
+
+    def post(self, request, incident_id):
+        incident = _live_audio_incident_for_user(request.user, incident_id)
+        if incident is None or incident.status == Incident.IncidentStatus.CLOSED:
+            return Response({"detail": "Active SOS incident not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.user == incident.user:
+            return Response({"detail": "Only an assigned responder can create a live-audio session."}, status=status.HTTP_403_FORBIDDEN)
+        if not request.user.is_active or request.user.role != User.Role.AUTHORITY or request.user.authority_status != "approved":
+            return Response({"detail": "Approved responder authorization is required."}, status=status.HTTP_403_FORBIDDEN)
+        if not bool(request.data.get("victim_consent")):
+            return Response({"detail": "Explicit victim live-audio consent is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        victim_token = secrets.token_urlsafe(32)
+        responder_token = secrets.token_urlsafe(32)
+        session = LiveAudioSession.objects.create(
+            incident=incident, victim=incident.user, responder=request.user,
+            victim_consent=True, expires_at=timezone.now() + timedelta(minutes=15),
+            victim_token_hash=_token_hash(victim_token), responder_token_hash=_token_hash(responder_token),
+        )
+        record_incident_audit(actor=request.user, action=IncidentAuditEvent.Action.INCIDENT_VIEWED, outcome=IncidentAuditEvent.Outcome.SUCCESS, incident=incident)
+        return Response({"session": LiveAudioSessionSerializer(session).data, "responder_token": responder_token, "victim_token": victim_token}, status=status.HTTP_201_CREATED)
+
+    def get(self, request, incident_id):
+        incident = _live_audio_incident_for_user(request.user, incident_id)
+        if incident is None:
+            return Response({"detail": "Incident not found."}, status=status.HTTP_404_NOT_FOUND)
+        sessions = LiveAudioSession.objects.filter(incident=incident).exclude(status=LiveAudioSession.Status.EXPIRED)
+        return Response(LiveAudioSessionSerializer(sessions, many=True).data)
+
+
+class LiveAudioSignalView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "live_audio"
+
+    def _session(self, request, session_id):
+        session = LiveAudioSession.objects.select_related("incident", "victim", "responder").filter(pk=session_id).first()
+        if session is None or request.user not in (session.victim, session.responder):
+            return None
+        if session.is_expired:
+            if session.status != LiveAudioSession.Status.EXPIRED:
+                session.status = LiveAudioSession.Status.EXPIRED
+                session.save(update_fields=["status"])
+            return None
+        if session.incident.status == Incident.IncidentStatus.CLOSED or not session.victim_consent:
+            return None
+        return session
+
+    def get(self, request, session_id):
+        session = self._session(request, session_id)
+        if session is None:
+            return Response({"detail": "Live-audio session unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        signals = session.signals.exclude(sender=request.user)
+        return Response(LiveAudioSignalSerializer(signals, many=True).data)
+
+    def post(self, request, session_id):
+        session = self._session(request, session_id)
+        if session is None or session.status == LiveAudioSession.Status.TERMINATED:
+            return Response({"detail": "Live-audio session unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = LiveAudioSignalSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            signal = serializer.save(session=session, sender=request.user)
+        except IntegrityError:
+            return Response({"detail": "Replayed signal sequence."}, status=status.HTTP_409_CONFLICT)
+        if signal.kind == "bye":
+            session.status = LiveAudioSession.Status.TERMINATED
+            session.terminated_at = timezone.now()
+            session.save(update_fields=["status", "terminated_at"])
+        elif session.status == LiveAudioSession.Status.PENDING:
+            session.status = LiveAudioSession.Status.ACTIVE
+            session.save(update_fields=["status"])
+        return Response(LiveAudioSignalSerializer(signal).data, status=status.HTTP_201_CREATED)
 
 
 class IncidentListCreateView(generics.ListCreateAPIView):

@@ -11,6 +11,8 @@ from .views import (
     IncidentDetailView,
     IncidentLocationView,
     IncidentListCreateView,
+    LiveAudioSessionView,
+    LiveAudioSignalView,
 )
 
 urlpatterns = [
@@ -35,6 +37,8 @@ urlpatterns = [
         IncidentLocationView.as_view(),
         name="incident-location-history",
     ),
+    path("<uuid:incident_id>/live-audio/", LiveAudioSessionView.as_view(), name="live-audio-session"),
+    path("live-audio/<uuid:session_id>/signals/", LiveAudioSignalView.as_view(), name="live-audio-signals"),
     path(
         "authority/presence/",
         AuthorityPresenceView.as_view(),

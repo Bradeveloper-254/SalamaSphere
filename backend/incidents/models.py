@@ -182,6 +182,52 @@ class IncidentLocation(models.Model):
         return f"{self.incident_id} @ {self.captured_at.isoformat()}"
 
 
+class LiveAudioSession(models.Model):
+    """Short-lived, incident-scoped signalling session; media is never stored."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACTIVE = "active", "Active"
+        TERMINATED = "terminated", "Terminated"
+        EXPIRED = "expired", "Expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    incident = models.ForeignKey(Incident, on_delete=models.PROTECT, related_name="live_audio_sessions")
+    victim = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="live_audio_sessions")
+    responder = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="responder_live_audio_sessions")
+    victim_consent = models.BooleanField(default=False)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    expires_at = models.DateTimeField()
+    terminated_at = models.DateTimeField(null=True, blank=True)
+    victim_token_hash = models.CharField(max_length=64)
+    responder_token_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["incident", "status", "expires_at"])]
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+        return self.expires_at <= timezone.now()
+
+
+class LiveAudioSignal(models.Model):
+    """Small SDP/ICE signalling messages. Audio data must never be placed here."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(LiveAudioSession, on_delete=models.CASCADE, related_name="signals")
+    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    sequence = models.PositiveIntegerField()
+    kind = models.CharField(max_length=16)
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["session", "sender", "sequence"], name="unique_live_audio_signal_sequence")]
+        ordering = ["created_at"]
+
+
 class IncidentAssignment(models.Model):
     """
     Explicitly links an incident to an authority account.

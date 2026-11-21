@@ -10,7 +10,7 @@ from .models import Incident
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from .models import Incident, IncidentAssignment, IncidentLocation
+from .models import Incident, IncidentAssignment, IncidentLocation, LiveAudioSession, LiveAudioSignal
 
 
 class CoordinateField(serializers.DecimalField):
@@ -26,6 +26,30 @@ class CoordinateField(serializers.DecimalField):
         except (InvalidOperation, TypeError, ValueError):
             pass
         return super().to_internal_value(data)
+
+
+class LiveAudioSessionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LiveAudioSession
+        fields = ["id", "incident", "victim", "responder", "victim_consent", "status", "expires_at", "terminated_at", "created_at"]
+        read_only_fields = fields
+
+
+class LiveAudioSignalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LiveAudioSignal
+        fields = ["id", "sequence", "kind", "payload", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate_kind(self, value):
+        if value not in {"offer", "answer", "ice", "bye"}:
+            raise serializers.ValidationError("Unsupported signalling message.")
+        return value
+
+    def validate_payload(self, value):
+        if not isinstance(value, dict) or len(str(value)) > 16384:
+            raise serializers.ValidationError("Signal payload must be a small JSON object.")
+        return value
 
 
 class IncidentSerializer(serializers.ModelSerializer):
