@@ -69,6 +69,18 @@ def _token_hash(value):
     return sha256(value.encode("utf-8")).hexdigest()
 
 
+def _is_current_responder(session, user):
+    return (
+        user == session.responder
+        and user.is_active
+        and user.role == User.Role.AUTHORITY
+        and user.authority_status == "approved"
+        and IncidentAssignment.objects.filter(
+            incident=session.incident, authority=user, is_active=True
+        ).exists()
+    )
+
+
 class LiveAudioSessionView(APIView):
     """Authenticated WebRTC signalling authorization. Never transports audio."""
     permission_classes = [IsAuthenticated]
@@ -83,18 +95,16 @@ class LiveAudioSessionView(APIView):
             return Response({"detail": "Only an assigned responder can create a live-audio session."}, status=status.HTTP_403_FORBIDDEN)
         if not request.user.is_active or request.user.role != User.Role.AUTHORITY or request.user.authority_status != "approved":
             return Response({"detail": "Approved responder authorization is required."}, status=status.HTTP_403_FORBIDDEN)
-        if not bool(request.data.get("victim_consent")):
-            return Response({"detail": "Explicit victim live-audio consent is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        victim_token = secrets.token_urlsafe(32)
-        responder_token = secrets.token_urlsafe(32)
+        # A responder cannot assert survivor consent. The authenticated victim
+        # must approve this exact pending session through the approval endpoint.
         session = LiveAudioSession.objects.create(
             incident=incident, victim=incident.user, responder=request.user,
-            victim_consent=True, expires_at=timezone.now() + timedelta(minutes=15),
-            victim_token_hash=_token_hash(victim_token), responder_token_hash=_token_hash(responder_token),
+            victim_consent=False, expires_at=timezone.now() + timedelta(minutes=5),
+            victim_token_hash=_token_hash(secrets.token_urlsafe(32)),
+            responder_token_hash=_token_hash(secrets.token_urlsafe(32)),
         )
         record_incident_audit(actor=request.user, action=IncidentAuditEvent.Action.INCIDENT_VIEWED, outcome=IncidentAuditEvent.Outcome.SUCCESS, incident=incident)
-        return Response({"session": LiveAudioSessionSerializer(session).data, "responder_token": responder_token, "victim_token": victim_token}, status=status.HTTP_201_CREATED)
+        return Response({"session": LiveAudioSessionSerializer(session).data}, status=status.HTTP_201_CREATED)
 
     def get(self, request, incident_id):
         incident = _live_audio_incident_for_user(request.user, incident_id)
@@ -102,6 +112,36 @@ class LiveAudioSessionView(APIView):
             return Response({"detail": "Incident not found."}, status=status.HTTP_404_NOT_FOUND)
         sessions = LiveAudioSession.objects.filter(incident=incident).exclude(status=LiveAudioSession.Status.EXPIRED)
         return Response(LiveAudioSessionSerializer(sessions, many=True).data)
+
+
+class LiveAudioApprovalView(APIView):
+    """The survivor alone activates a pending session for their incident."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "live_audio"
+
+    def post(self, request, session_id):
+        session = LiveAudioSession.objects.select_related("incident", "victim", "responder").filter(pk=session_id).first()
+        if session is None or request.user != session.victim:
+            return Response({"detail": "Pending live-audio request not found."}, status=status.HTTP_404_NOT_FOUND)
+        if session.is_expired or session.status != LiveAudioSession.Status.PENDING:
+            return Response({"detail": "This approval request has expired or was already used."}, status=status.HTTP_409_CONFLICT)
+        if session.incident.status == Incident.IncidentStatus.CLOSED or not _is_current_responder(session, session.responder):
+            session.status = LiveAudioSession.Status.TERMINATED
+            session.terminated_at = timezone.now()
+            session.save(update_fields=["status", "terminated_at"])
+            return Response({"detail": "Responder is no longer authorized for this SOS."}, status=status.HTTP_403_FORBIDDEN)
+        if request.data.get("approve") is not True:
+            session.status = LiveAudioSession.Status.TERMINATED
+            session.terminated_at = timezone.now()
+            session.save(update_fields=["status", "terminated_at"])
+            return Response({"detail": "Live-audio request declined."}, status=status.HTTP_409_CONFLICT)
+        session.victim_consent = True
+        session.status = LiveAudioSession.Status.ACTIVE
+        session.expires_at = timezone.now() + timedelta(minutes=15)
+        session.save(update_fields=["victim_consent", "status", "expires_at"])
+        record_incident_audit(actor=request.user, action=IncidentAuditEvent.Action.INCIDENT_VIEWED, outcome=IncidentAuditEvent.Outcome.SUCCESS, incident=session.incident)
+        return Response({"session": LiveAudioSessionSerializer(session).data})
 
 
 class LiveAudioSignalView(APIView):
@@ -118,7 +158,10 @@ class LiveAudioSignalView(APIView):
                 session.status = LiveAudioSession.Status.EXPIRED
                 session.save(update_fields=["status"])
             return None
-        if session.incident.status == Incident.IncidentStatus.CLOSED or not session.victim_consent:
+        if (session.incident.status == Incident.IncidentStatus.CLOSED or
+                not session.victim_consent or
+                session.status != LiveAudioSession.Status.ACTIVE or
+                (request.user == session.responder and not _is_current_responder(session, request.user))):
             return None
         return session
 
